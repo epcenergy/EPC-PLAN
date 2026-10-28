@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>EPC PLAN</title>
+<meta name="theme-color" content="#00468c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="EPC PLAN">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="./icon-32.png">
+<link rel="apple-touch-icon" href="./icon-180.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== ΑΡΧΙΚΗ: λίστα έργων ===== -->
+  <section id="home" class="screen active">
+    <header class="topbar brand">
+      <img src="./icon-192.png" alt="" class="logo">
+      <div class="brand-text"><b>EPC PLAN</b><small>Κατόψεις ηλεκτρολογικών</small></div>
+      <button class="icon-btn" id="homeMenuBtn" aria-label="Μενού"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
+    </header>
+    <div class="search-wrap"><input id="projSearch" type="search" placeholder="Αναζήτηση έργου, πελάτη, διεύθυνσης…"></div>
+    <main id="projList" class="list"></main>
+    <button class="fab" id="newProjBtn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Νέο έργο</span></button>
+  </section>
+
+  <!-- ===== ΕΡΓΟ ===== -->
+  <section id="project" class="screen">
+    <header class="topbar">
+      <button class="icon-btn" data-back="home" aria-label="Πίσω"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="title" id="projTitle">Έργο</div>
+      <button class="icon-btn" id="projMenuBtn" aria-label="Μενού"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
+    </header>
+    <main class="scroll pad">
+      <div class="card">
+        <label class="fld"><span>Όνομα έργου</span><input id="pName" placeholder="π.χ. Ανακαίνιση οδού Αγίου Δημητρίου 12"></label>
+        <label class="fld"><span>Πελάτης</span><input id="pClient" placeholder="Ονοματεπώνυμο"></label>
+        <label class="fld"><span>Τηλέφωνο</span><input id="pPhone" type="tel" inputmode="tel" placeholder="69…"></label>
+        <label class="fld"><span>Διεύθυνση</span><input id="pAddress" placeholder="Οδός, αριθμός, περιοχή"></label>
+      </div>
+      <div class="sec-head"><h3>Κατόψεις / όροφοι</h3><button class="btn small" id="addFloorBtn">+ Όροφος</button></div>
+      <div id="floorList" class="list"></div>
+      <div class="btn-col">
+        <button class="btn primary" id="projPdfBtn">Εξαγωγή PDF</button>
+        <button class="btn" id="projCircBtn">Κυκλώματα</button>
+        <button class="btn" id="projBackupBtn">Αποθήκευση αντιγράφου ασφαλείας</button>
+      </div>
+    </main>
+  </section>
+
+  <!-- ===== ΕΠΕΞΕΡΓΑΣΙΑ ΚΑΤΟΨΗΣ ===== -->
+  <section id="editor" class="screen">
+    <header class="topbar">
+      <button class="icon-btn" id="edBack" aria-label="Πίσω"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <button class="title-btn" id="floorBtn"><span id="edTitle">Κάτοψη</span><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button>
+      <button class="icon-btn" id="undoBtn" aria-label="Αναίρεση"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 010 10h-3"/></svg></button>
+      <button class="icon-btn" id="redoBtn" aria-label="Επανάληψη"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 000 10h3"/></svg></button>
+      <button class="icon-btn" id="edMenuBtn" aria-label="Μενού"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
+    </header>
+    <div id="stage">
+      <svg id="plan" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <pattern id="gridS" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M 20 0 L 0 0 0 20" fill="none" stroke="#dfe6ef" stroke-width="0.8"/></pattern>
+          <pattern id="gridL" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="100" height="100" fill="url(#gridS)"/><path d="M 100 0 L 0 0 0 100" fill="none" stroke="#c8d3e1" stroke-width="1.2"/></pattern>
+        </defs>
+        <g id="world"></g>
+      </svg>
+      <div id="hint" class="hint"></div>
+      <button class="fit-btn" id="fitBtn" aria-label="Προσαρμογή"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      <div id="emptyHelp" class="empty-help"></div>
+    </div>
+    <div id="ctxbar" class="ctxbar"></div>
+    <nav id="modebar" class="modebar">
+      <button data-mode="select"><svg viewBox="0 0 24 24"><path d="M6 3l12 9-5.5 1.2L15 20l-2.4 1-2.5-6.6L6 18z"/></svg><span>Επιλογή</span></button>
+      <button data-mode="room"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M4 12h7v8"/></svg><span>Χώρος</span></button>
+      <button data-mode="symbol"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M7 7l10 10M17 7L7 17"/></svg><span>Σύμβολα</span></button>
+      <button data-mode="link"><svg viewBox="0 0 24 24"><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="6" r="2.5"/><path d="M7 16l2-2M11 12l2-2M15 8l2-2"/></svg><span>Σύνδεση</span></button>
+      <button data-mode="opening"><svg viewBox="0 0 24 24"><path d="M3 20h18"/><path d="M6 20V6"/><path d="M6 6a14 14 0 0114 14" stroke-dasharray="3 2"/></svg><span>Κουφώματα</span></button>
+    </nav>
+  </section>
+</div>
+
+<!-- bottom sheet -->
+<div id="sheetBack" class="sheet-back"></div>
+<div id="sheet" class="sheet"><div class="grab"></div><div id="sheetBody" class="sheet-body"></div></div>
+
+<!-- ίσιωμα φωτογραφίας -->
+<div id="warp" class="warp">
+  <header class="topbar dark">
+    <button class="icon-btn" id="warpCancel" aria-label="Ακύρωση"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <div class="title">Ίσιωμα φωτογραφίας</div>
+    <button class="icon-btn" id="warpRotate" aria-label="Περιστροφή"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 11-3-6.2"/><path d="M20 4v5h-5"/></svg></button>
+  </header>
+  <div id="warpStage"><canvas id="warpCanvas"></canvas></div>
+  <div class="warp-foot">
+    <p>Σύρε τις 4 πορτοκαλί γωνίες πάνω στις γωνίες του χαρτιού.</p>
+    <label class="switch-row"><input type="checkbox" id="warpEnhance" checked><span>Ενίσχυση γραμμών (καθαρότερο σκίτσο)</span></label>
+    <div class="row2">
+      <button class="btn" id="warpSkip">Χωρίς ίσιωμα</button>
+      <button class="btn primary" id="warpOk">Ίσιωμα & χρήση</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+<div id="busy" class="busy"><div class="spinner"></div><span id="busyText">Παρακαλώ περίμενε…</span></div>
+
+<input type="file" id="fileCam" accept="image/*" capture="environment" hidden>
+<input type="file" id="fileImg" accept="image/*" hidden>
+<input type="file" id="fileBackup" accept=".json,.epcplan,application/json" hidden>
+
+<script src="symbols.js"></script>
+<script src="render.js"></script>
+<script src="db.js"></script>
+<script src="export.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
