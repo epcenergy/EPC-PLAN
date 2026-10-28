@@ -87,11 +87,19 @@
     let ey = ly + 75 + perCol * rh + 20;
     if ((floor.links || []).length) {
       s += `<line x1="${lx + 20}" y1="${ey + 18}" x2="${lx + 70}" y2="${ey + 18}" stroke="#0b5cad" stroke-width="3" stroke-dasharray="10 7"/>`;
-      s += text(lx + 85, ey + 26, 'Χειρισμός φωτιστικού από διακόπτη', 22, '#111');
+      s += text(lx + 85, ey + 26, 'Σύνδεση φωτιστικών / διακόπτη', 22, '#111');
       ey += 46;
     }
     if (opts.showCircuits !== false) { s += text(lx + 20, ey + 26, 'Κόκκινο: αριθμός κυκλώματος', 21, '#c0392b', 700); ey += 36; }
-    if (opts.showHeights !== false) { s += text(lx + 20, ey + 26, 'Γκρι: ύψος τοποθέτησης (εκ.)', 21, '#555', 700); }
+    if (opts.showHeights !== false) { s += text(lx + 20, ey + 26, 'Γκρι: ύψος τοποθέτησης (εκ.)', 21, '#555', 700); ey += 36; }
+    const v = project.view || {};
+    const hasSw = floor.items.some(i => { const y = SY().byId[i.type]; return y && y.cat === 'Διακόπτες' && y.mount === 'wall'; });
+    const hasSo = floor.items.some(i => { const y = SY().byId[i.type]; return y && ((y.kind === 'socket' && y.mount === 'wall') || y.sub === 'Πρίζες ασθενών'); });
+    if (hasSw || hasSo) {
+      s += text(lx + 20, ey + 30, 'Ύψη (εκτός αν σημειώνεται):', 21, '#111', 700);
+      if (hasSw) { s += text(lx + 40, ey + 62, `• Διακόπτες: ${v.hSwitch || '120'} εκ.`, 21, '#111', 400); ey += 32; }
+      if (hasSo) { s += text(lx + 40, ey + 62, `• Πρίζες: ${v.hSocket || '40'} εκ.`, 21, '#111', 400); }
+    }
     return s;
   }
 

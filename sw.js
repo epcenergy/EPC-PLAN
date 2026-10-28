@@ -1,5 +1,5 @@
 /* EPC PLAN – λειτουργία χωρίς internet */
-const CACHE = 'epcplan-v1.0.0';
+const CACHE = 'epcplan-v1.1.0';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'app.css',
   'symbols.js', 'render.js', 'db.js', 'export.js', 'app.js',

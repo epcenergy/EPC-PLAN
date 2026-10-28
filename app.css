@@ -182,3 +182,16 @@ svg { display: block; }
 .busy.show { display: flex; }
 .spinner { width: 46px; height: 46px; border: 5px solid rgba(255,255,255,.3); border-top-color: var(--orange); border-radius: 50%; animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* γρήγορα πατήματα */
+.qbadge { position: absolute; transform: translate(-50%, calc(-100% - 22px)); background: #f7a93a; color: #111; border-radius: 14px; padding: 5px 10px 5px 8px;
+  display: none; align-items: center; gap: 4px; font-weight: 800; font-size: 14px; box-shadow: 0 4px 14px rgba(0,0,0,.25); pointer-events: none; white-space: nowrap; z-index: 5; }
+.qbadge.show { display: flex; }
+.qbadge b { background: #111; color: #f7a93a; border-radius: 50%; width: 24px; height: 24px; display: grid; place-items: center; font-size: 14px; }
+.qbadge .ic { width: 26px; height: 26px; background: #fff; border-radius: 6px; }
+.qbadge span:last-child { margin-left: 2px; }
+.qchip { gap: 8px; padding: 0 8px; }
+.qchip .qn { display: flex; align-items: center; gap: 1px; }
+.qchip .qn b { font-size: 13px; margin-right: 1px; }
+.qchip .ic { width: 24px; height: 24px; background: #fff; border-radius: 5px; }
+.qchip.on { background: #fff4e3; border-color: #f7a93a; color: #111; }

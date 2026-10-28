@@ -43,6 +43,15 @@
     },
     // εσωτερικό σημείο για την ετικέτα (το πιο «βαθύ» σημείο του χώρου)
     labelPoint(pts, avoid = []) {
+      const key = JSON.stringify(pts) + '|' + JSON.stringify(avoid);
+      const c = G._lp || (G._lp = new Map());
+      if (c.has(key)) return c.get(key);
+      if (c.size > 300) c.clear();
+      const r = G._labelPoint(pts, avoid);
+      c.set(key, r);
+      return r;
+    },
+    _labelPoint(pts, avoid) {
       const b = G.bbox(pts);
       let best = [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2], bestD = -1;
       const N = 18;

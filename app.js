@@ -7,7 +7,7 @@
   const esc = RD.esc;
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const clone = (o) => JSON.parse(JSON.stringify(o));
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.1.0';
 
   // ---------- εικονίδια ----------
   const IC = {
@@ -446,21 +446,45 @@
     rafP = true;
     requestAnimationFrame(() => { rafP = false; drawNow(); });
   }
+  // μόνιμα στοιχεία: η φωτογραφία ΔΕΝ ξαναφορτώνεται σε κάθε σχεδίαση (αυτό έκανε την εφαρμογή να κολλάει)
+  const NS = 'http://www.w3.org/2000/svg';
+  const gridEl = document.createElementNS(NS, 'rect'); gridEl.setAttribute('fill', 'url(#gridL)');
+  const photoEl = document.createElementNS(NS, 'image'); photoEl.setAttribute('preserveAspectRatio', 'none');
+  const contentEl = document.createElementNS(NS, 'g');
+  world.append(gridEl, photoEl, contentEl);
+  let photoHref = null;
+  // μόνο μετακίνηση/ζουμ: αλλάζει ένα attribute, όχι όλο το σχέδιο
+  function drawView() {
+    if (!floor) return;
+    const v = ST.view;
+    world.setAttribute('transform', `translate(${v.x},${v.y}) scale(${v.s})`);
+    if (cur.view.grid !== false) {
+      const [vx0, vy0] = toWorld(0, 0), [vx1, vy1] = toWorld(stageW, stageH);
+      gridEl.setAttribute('x', Math.floor(vx0 / 100) * 100 - 100); gridEl.setAttribute('y', Math.floor(vy0 / 100) * 100 - 100);
+      gridEl.setAttribute('width', vx1 - vx0 + 400); gridEl.setAttribute('height', vy1 - vy0 + 400);
+      gridEl.style.display = '';
+    } else gridEl.style.display = 'none';
+  }
+  let rafV = false;
+  function drawViewSoon() { if (rafV) return; rafV = true; requestAnimationFrame(() => { rafV = false; drawView(); }); }
   function drawNow() {
     if (!floor) return;
-    const v = ST.view, s = v.s;
-    world.setAttribute('transform', `translate(${v.x},${v.y}) scale(${s})`);
-    const [vx0, vy0] = toWorld(0, 0), [vx1, vy1] = toWorld(stageW, stageH);
-    let out = '';
-    if (cur.view.grid !== false) out += `<rect x="${Math.floor(vx0 / 100) * 100}" y="${Math.floor(vy0 / 100) * 100}" width="${vx1 - vx0 + 200}" height="${vy1 - vy0 + 200}" fill="url(#${s < 0.35 ? 'gridL' : 'gridL'})"/>`;
+    drawView();
+    const s = ST.view.s;
     const ph = floor.photo;
     if (ph && ph.visible !== false) {
-      out += `<image href="${ph.data}" x="${ph.x}" y="${ph.y}" width="${ph.w}" height="${ph.h}" opacity="${ph.opacity}" preserveAspectRatio="none" transform="rotate(${ph.rot || 0} ${ph.x + ph.w / 2} ${ph.y + ph.h / 2})"/>`;
-      if (ST.mode === 'photo') out += `<rect x="${ph.x}" y="${ph.y}" width="${ph.w}" height="${ph.h}" fill="none" stroke="${RD.ACCENT}" stroke-width="${3 / s}" stroke-dasharray="${8 / s} ${6 / s}" transform="rotate(${ph.rot || 0} ${ph.x + ph.w / 2} ${ph.y + ph.h / 2})"/>`;
-    }
+      if (photoHref !== ph.data) { photoEl.setAttribute('href', ph.data); photoHref = ph.data; }
+      photoEl.setAttribute('x', ph.x); photoEl.setAttribute('y', ph.y);
+      photoEl.setAttribute('width', ph.w); photoEl.setAttribute('height', ph.h);
+      photoEl.setAttribute('opacity', ph.opacity);
+      photoEl.setAttribute('transform', `rotate(${ph.rot || 0} ${ph.x + ph.w / 2} ${ph.y + ph.h / 2})`);
+      photoEl.style.display = '';
+    } else photoEl.style.display = 'none';
+    let out = '';
+    if (ph && ph.visible !== false && ST.mode === 'photo') out += `<rect x="${ph.x}" y="${ph.y}" width="${ph.w}" height="${ph.h}" fill="none" stroke="${RD.ACCENT}" stroke-width="${3 / s}" stroke-dasharray="${8 / s} ${6 / s}" transform="rotate(${ph.rot || 0} ${ph.x + ph.w / 2} ${ph.y + ph.h / 2})"/>`;
     out += RD.floorSVG(floor, { scale: s, sel: ST.sel, linkFrom: ST.linkFrom, showCircuits: cur.view.circuits, showHeights: cur.view.heights, showNotes: cur.view.notes });
     out += overlaySVG();
-    world.innerHTML = out;
+    contentEl.innerHTML = out;
   }
 
   function overlaySVG() {
@@ -681,7 +705,7 @@
       // το σημείο κόσμου κάτω από το αρχικό κέντρο ακολουθεί το νέο κέντρο
       const wx = (pinch.c[0] - pinch.v.x) / pinch.v.s, wy = (pinch.c[1] - pinch.v.y) / pinch.v.s;
       ST.view.s = s; ST.view.x = c[0] - wx * s; ST.view.y = c[1] - wy * s;
-      draw();
+      drawViewSoon();
       return;
     }
     if (!act) return;
@@ -693,7 +717,7 @@
   const endPtr = e => {
     if (!ptrs.has(e.pointerId)) return;
     ptrs.delete(e.pointerId);
-    if (pinch) { if (ptrs.size < 2) pinch = null; if (ptrs.size === 0) act = null; return; }
+    if (pinch) { if (ptrs.size < 2) { pinch = null; draw(); } if (ptrs.size === 0) act = null; return; }
     if (!act) return;
     const a = act; act = null;
     ST.guides = null;
@@ -711,7 +735,8 @@
     const w = toWorld(...sp);
     ST.view.s = Math.max(0.05, Math.min(10, ST.view.s * k));
     ST.view.x = sp[0] - w[0] * ST.view.s; ST.view.y = sp[1] - w[1] * ST.view.s;
-    draw();
+    drawViewSoon();
+    clearTimeout(ST.wheelT); ST.wheelT = setTimeout(draw, 150);
   }, { passive: false });
 
   function beginAction(a, wp) {
@@ -719,8 +744,8 @@
     if (ST.splitting) { a.kind = 'pan'; return; }
     if (m === 'symbol' || m === 'link') {
       // σύρσιμο υπάρχοντος συμβόλου επιτρέπεται και εδώ
-      const h = hitTest(wp, { itemsOnly: true });
-      if (h && m === 'symbol') {
+      const h = hitTest(wp, { itemsOnly: true, noHandles: true });
+      if (h && h.kind === 'item' && m === 'symbol') {
         const it = item(h.id);
         a.kind = 'item'; a.id = h.id; a.off = [it.x - wp[0], it.y - wp[1]];
         return;
@@ -763,7 +788,8 @@
     switch (a.kind) {
       case 'pan':
         ST.view.x = a.v.x + (sp[0] - a.start[0]); ST.view.y = a.v.y + (sp[1] - a.start[1]);
-        break;
+        drawViewSoon();
+        return;
       case 'rect':
         ST.draft.b = snapPoint(wp);
         break;
@@ -829,12 +855,11 @@
     } else if (m === 'room' && ST.roomTool === 'poly') {
       polyTap(wp);
     } else if (m === 'symbol') {
-      if (!ST.placing) { symbolPalette(); return; }
+      if (ST.quick || !ST.placing) { quickTap(a.start, wp); return; }
       const it = { id: uid(), type: ST.placing, x: 0, y: 0, rot: 0, circuit: '', height: '', note: '' };
       const s = SY.byId[it.type];
       if (s.labelDefault) it.label = nextPanelLabel(s);
       if (ST.lastCircuit && ST.lastCircuit[it.type]) it.circuit = ST.lastCircuit[it.type];
-      if (ST.lastHeight && ST.lastHeight[it.type]) it.height = ST.lastHeight[it.type];
       placeOnWall(it, wp);
       floor.items.push(it);
       ST.sel = { kind: 'item', id: it.id };
@@ -972,25 +997,77 @@
     if (!isNew) setTimeout(() => inp.select(), 250);
   }
 
+  // ----- γρήγορη τοποθέτηση με πατήματα -----
+  // 1 = διακόπτης, 2 = πρίζα, 3 = διακόπτης + πρίζα, 4 = φωτιστικό
+  const QUICK = { 1: ['sw1'], 2: ['sock'], 3: ['sw1', 'sock'], 4: ['lamp'] };
+  const QNAME = { 1: 'Διακόπτης', 2: 'Πρίζα', 3: 'Διακόπτης + πρίζα', 4: 'Φωτιστικό' };
+  ST.quick = true;
+  const qb = document.createElement('div'); qb.className = 'qbadge'; $('#stage').appendChild(qb);
+  function quickTap(sp, wp) {
+    const Q = ST.qt, now = Date.now();
+    if (Q && now - Q.t < 450 && Math.hypot(sp[0] - Q.sp[0], sp[1] - Q.sp[1]) < 45) { Q.n = Math.min(4, Q.n + 1); Q.t = now; }
+    else { if (Q) quickCommit(); ST.qt = { n: 1, t: now, sp, wp }; }
+    const q = ST.qt;
+    qb.innerHTML = `<b>${q.n}</b>${QUICK[q.n].map(id => symIcon(id, 26)).join('')}<span>${QNAME[q.n]}</span>`;
+    qb.classList.add('show');
+    // μένει μέσα στην οθόνη
+    const half = qb.offsetWidth / 2 + 6;
+    qb.style.left = Math.max(half, Math.min(stageW - half, q.sp[0])) + 'px';
+    qb.style.top = Math.max(qb.offsetHeight + 30, q.sp[1]) + 'px';
+    if (navigator.vibrate) navigator.vibrate(8);
+    clearTimeout(ST.qtT); ST.qtT = setTimeout(quickCommit, 430);
+  }
+  function makeItem(type) {
+    const it = { id: uid(), type, x: 0, y: 0, rot: 0, circuit: '', height: '', note: '' };
+    const s = SY.byId[type];
+    if (s.labelDefault) it.label = nextPanelLabel(s);
+    if (ST.lastCircuit && ST.lastCircuit[type]) it.circuit = ST.lastCircuit[type];
+    return it;
+  }
+  function quickCommit() {
+    clearTimeout(ST.qtT);
+    const Q = ST.qt; ST.qt = null;
+    qb.classList.remove('show');
+    if (!Q || !floor) return;
+    const types = QUICK[Q.n];
+    if (types.length === 1) {
+      const it = makeItem(types[0]); placeOnWall(it, Q.wp); floor.items.push(it);
+    } else {
+      // διακόπτης και πρίζα δίπλα-δίπλα στον ίδιο τοίχο
+      const a = makeItem(types[0]), b = makeItem(types[1]);
+      const onWall = placeOnWall(a, Q.wp);
+      const off = 15 * RD.SK, r = (a.rot || 0) * Math.PI / 180;
+      const tx = onWall ? Math.cos(r) : 1, ty = onWall ? Math.sin(r) : 0;
+      const x = a.x, y = a.y;
+      a.x = x - tx * off; a.y = y - ty * off;
+      b.x = x + tx * off; b.y = y + ty * off; b.rot = a.rot;
+      floor.items.push(a, b);
+    }
+    commit(); draw();
+    if (navigator.vibrate) navigator.vibrate(20);
+  }
+
   // ----- σύνδεση -----
   function linkTap(wp) {
-    const h = hitTest(wp, { itemsOnly: true });
+    const h = hitTest(wp, { itemsOnly: true, noHandles: true });
     if (!h) { ST.linkFrom = null; updateCtx(); draw(); return; }
     const it = item(h.id);
     if (!ST.linkFrom) { ST.linkFrom = it.id; updateCtx(); draw(); return; }
     if (ST.linkFrom === it.id) { ST.linkFrom = null; updateCtx(); draw(); return; }
     const a = item(ST.linkFrom), b = it;
     const ka = SY.byId[a.type].kind, kb = SY.byId[b.type].kind;
-    if ((ka === 'switch') === (kb === 'switch')) {
-      // ίδιο είδος: αλλάζει απλώς η αφετηρία
+    const lampLamp = ka === 'lamp' && kb === 'lamp';
+    if (!lampLamp && (ka === 'switch') === (kb === 'switch')) {
+      // δεν ενώνονται (π.χ. διακόπτης με διακόπτη): αλλάζει απλώς η αφετηρία
       ST.linkFrom = it.id; updateCtx(); draw(); return;
     }
-    const sw = ka === 'switch' ? a : b, ld = ka === 'switch' ? b : a;
-    const ex = floor.links.find(l => l.a === sw.id && l.b === ld.id);
+    const first = lampLamp ? a : (ka === 'switch' ? a : b), second = first === a ? b : a;
+    const ex = floor.links.find(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id));
     if (ex) { floor.links = floor.links.filter(l => l !== ex); toast('Η σύνδεση αφαιρέθηκε'); }
-    else { floor.links.push({ id: uid(), a: sw.id, b: ld.id }); if (navigator.vibrate) navigator.vibrate(20); }
-    // συνέχεια: κράτα επιλεγμένο τον διακόπτη για να ενώσεις κι άλλα φωτιστικά
-    ST.linkFrom = sw.id;
+    else { floor.links.push({ id: uid(), a: first.id, b: second.id }); if (navigator.vibrate) navigator.vibrate(20); }
+    if (lampLamp) ST.linkFrom = b.id;              // αλυσίδα: συνεχίζει από το τελευταίο φωτιστικό
+    else if (ka === 'switch') ST.linkFrom = a.id;  // από διακόπτη: ενώνεις κι άλλα φωτιστικά
+    else { ST.linkFrom = null; if (!ex) toast('Η σειρά φωτιστικών κατέληξε στον διακόπτη'); } // η αλυσίδα έκλεισε
     commit(); updateCtx(); draw();
   }
 
@@ -999,18 +1076,20 @@
     if (ST.draft && m !== 'room') finishDraft(false);
     ST.mode = m;
     if (m !== 'link') ST.linkFrom = null;
-    if (m !== 'select' && m !== 'symbol' && m !== 'opening') ST.sel = {};
+    if ((m !== 'select' && m !== 'symbol' && m !== 'opening') || (m !== 'select' && ST.sel.kind === 'room')) ST.sel = {};
     $$('#modebar button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
     updateCtx(); draw();
     const hints = {
       room: ST.roomTool === 'rect' ? 'Σύρε διαγώνια για ορθογώνιο χώρο' : 'Πάτα τις γωνίες του χώρου με τη σειρά',
-      symbol: ST.placing ? 'Πάτα όπου θες να μπει το σύμβολο' : 'Διάλεξε σύμβολο',
-      link: 'Πάτα διακόπτη και μετά φωτιστικό',
+      symbol: ST.quick ? QHINT : 'Πάτα όπου θες να μπει: ' + (SY.byId[ST.placing] || {}).name,
+      link: 'Διακόπτης → φωτιστικά, ή φωτιστικά σε σειρά → διακόπτης',
       opening: 'Πάτα πάνω σε τοίχο για να μπει το κούφωμα',
       photo: 'Σύρε τη φωτογραφία για να τη μετακινήσεις',
     };
-    hint(hints[m] || '');
+    hint(hints[m] || '', m === 'symbol' && ST.quick ? 4000 : 2600);
+    if (m !== 'symbol') quickCommit();
   }
+  const QHINT = 'Πατήματα: 1 διακόπτης · 2 πρίζα · 3 διακόπτης+πρίζα · 4 φωτιστικό';
   let hintT = 0;
   function hint(t, ms = 2600) {
     const h = $('#hint');
@@ -1022,7 +1101,6 @@
     const m = b.dataset.mode;
     if (m === 'symbol' && ST.mode === 'symbol') { symbolPalette(); return; }
     setMode(m);
-    if (m === 'symbol' && !ST.placing) symbolPalette();
   });
 
   function chip(html, a, cls = '') { return `<button class="chip ${cls}" data-a="${a}">${html}</button>`; }
@@ -1041,12 +1119,13 @@
         if (floor.photo) h += chip(IC.image + 'Φωτογραφία', 'photo');
       }
     } else if (m === 'symbol') {
-      h = chip(IC.list + 'Όλα', 'palette', 'on');
-      h += ST.recent.slice(0, 8).map(id => `<button class="chip sym ${ST.placing === id ? 'on' : ''}" data-sym="${id}">${symIcon(id, 34)}</button>`).join('');
+      h = `<button class="chip qchip ${ST.quick ? 'on' : ''}" data-a="quick">${[1, 2, 3, 4].map(n => `<span class="qn"><b>${n}</b>${QUICK[n].map(id => symIcon(id, 24)).join('')}</span>`).join('')}</button>`;
+      h += chip(IC.list + 'Όλα', 'palette');
+      h += ST.recent.slice(0, 8).map(id => `<button class="chip sym ${!ST.quick && ST.placing === id ? 'on' : ''}" data-sym="${id}">${symIcon(id, 34)}</button>`).join('');
       if (sel.kind === 'item') h = itemChips() + `<span style="width:1px;align-self:stretch;background:#e0e6ee;flex:none"></span>` + h;
     } else if (m === 'link') {
       const f = ST.linkFrom && item(ST.linkFrom);
-      h = `<span class="ctx-text">${f ? `Επιλέχθηκε: <b>${esc(SY.byId[f.type].name)}</b>. Πάτα ${SY.byId[f.type].kind === 'switch' ? 'φωτιστικό' : 'διακόπτη'} για σύνδεση (ξανά για αφαίρεση).` : 'Πάτα έναν διακόπτη και μετά τα φωτιστικά που ανάβει.'}</span>`;
+      h = `<span class="ctx-text">${f ? `Από: <b>${esc(SY.byId[f.type].name)}</b>. ${SY.byId[f.type].kind === 'switch' ? 'Πάτα φωτιστικά για σύνδεση.' : 'Πάτα επόμενο φωτιστικό ή τον διακόπτη για να κλείσει η σειρά.'}` : 'Πάτα διακόπτη → φωτιστικά, ή φωτιστικό → φωτιστικό → … → διακόπτη.'}</span>`;
       if (f) h += chip(IC.x + 'Τέλος', 'linkdone');
     } else if (m === 'opening') {
       if (sel.kind === 'opening') h = openingChips() + `<span style="width:1px;align-self:stretch;background:#e0e6ee;flex:none"></span>`;
@@ -1092,6 +1171,7 @@
       case 'polycancel': finishDraft(false); break;
       case 'photo': photoSheet(); break;
       case 'palette': symbolPalette(); break;
+      case 'quick': ST.quick = true; ST.sel = {}; updateCtx(); draw(); hint(QHINT, 3500); break;
       case 'linkdone': ST.linkFrom = null; updateCtx(); draw(); break;
       case 'photoset': photoSheet(); break;
       case 'photodone': setMode('select'); break;
@@ -1192,6 +1272,7 @@
   // ----- παλέτα συμβόλων -----
   function pickSymbol(id) {
     ST.placing = id;
+    ST.quick = false;
     ST.recent = [id, ...ST.recent.filter(x => x !== id)].slice(0, 10);
     try { localStorage.setItem('epc_recent', JSON.stringify(ST.recent)); } catch (e) { }
     if (ST.mode !== 'symbol') setMode('symbol');
@@ -1256,6 +1337,21 @@
   }
   function nextNum(base, used) { let n = 1; while (used.has(base + n)) n++; return base + n; }
 
+  // ----- ύψη προεπιλογής (διακόπτες 120, πρίζες 40) -----
+  function hKind(type) {
+    const s = SY.byId[type];
+    if (!s) return '';
+    if (s.cat === 'Διακόπτες' && s.mount === 'wall') return 'switch';
+    if ((s.kind === 'socket' && s.mount === 'wall') || s.sub === 'Πρίζες ασθενών') return 'socket';
+    return '';
+  }
+  function defHeight(type) {
+    const k = hKind(type), v = cur.view || {};
+    if (k === 'switch') return String(v.hSwitch || '120');
+    if (k === 'socket') return String(v.hSocket || '40');
+    return '';
+  }
+
   // ----- ιδιότητες -----
   function allCircuits() {
     const set = new Set();
@@ -1282,13 +1378,14 @@
     const s = SY.byId[it.type];
     const isPanel = s.kind === 'panel';
     const circs = suggestCircuits(s.kind);
-    const heights = ['30', '60', '110', '120', '150', '180', '220', 'Οροφή'];
+    const heights = ['40', '60', '110', '120', '150', '180', '220', 'Οροφή'];
+    const dh = defHeight(it.type);
     const links = floor.links.filter(l => l.a === it.id || l.b === it.id).length;
     const b = Sheet.open(`<h3>${symIcon(it.type, 40)}<span>${esc(s.name)}<br><small style="color:#6b7788;font-weight:600;font-size:13px">${esc(s.cat)} · ${esc(s.sub)}${links ? ` · ${links} συνδέσεις` : ''}</small></span></h3>
       ${isPanel ? `<label class="fld"><span>Ονομασία πίνακα</span><input id="ipLabel" value="${esc(it.label || '')}" placeholder="π.χ. ΓΠ, ΥΠ1, ΥΠ κουζίνας"></label>` : `
       <label class="fld"><span>Κύκλωμα (αριθμός ασφάλειας)</span><input id="ipCirc" value="${esc(it.circuit || '')}" placeholder="π.χ. Φ1, Ρ3, Κ1" autocapitalize="characters"></label>
       <div class="chips" style="margin:-4px 0 12px">${circs.map(c => `<button class="chip" data-c="${esc(c)}">${esc(c)}</button>`).join('')}<button class="chip" data-c="">Κανένα</button></div>`}
-      <label class="fld"><span>Ύψος τοποθέτησης (εκ.)</span><input id="ipH" value="${esc(it.height || '')}" inputmode="numeric" placeholder="π.χ. 30"></label>
+      <label class="fld"><span>Ύψος τοποθέτησης (εκ.)</span><input id="ipH" value="${esc(it.height || '')}" inputmode="numeric" placeholder="${dh ? 'Προεπιλογή: ' + dh + ' (κενό = προεπιλογή)' : 'π.χ. 30'}"></label>
       <div class="chips" style="margin:-4px 0 12px">${heights.map(h => `<button class="chip" data-h="${h}">${h}</button>`).join('')}</div>
       <label class="fld"><span>Σημείωση</span><input id="ipNote" value="${esc(it.note || '')}" placeholder="π.χ. πάνω από πάγκο, για ψυγείο"></label>
       <div class="act-row">
@@ -1304,10 +1401,10 @@
       if (isPanel) it.label = b.querySelector('#ipLabel').value.trim();
       else it.circuit = b.querySelector('#ipCirc').value.trim().toUpperCase();
       it.height = b.querySelector('#ipH').value.trim();
+      if (it.height && it.height === dh) it.height = ''; // ίδιο με την προεπιλογή: δεν γράφεται στο σχέδιο
       it.note = b.querySelector('#ipNote').value.trim();
-      ST.lastCircuit = ST.lastCircuit || {}; ST.lastHeight = ST.lastHeight || {};
+      ST.lastCircuit = ST.lastCircuit || {};
       if (!isPanel) ST.lastCircuit[it.type] = it.circuit;
-      ST.lastHeight[it.type] = it.height;
       if (before !== JSON.stringify([it.label, it.circuit, it.height, it.note])) commit();
       draw();
     };
@@ -1368,7 +1465,13 @@
     <label class="switch-row"><input type="checkbox" data-v="heights" ${v.heights !== false ? 'checked' : ''}><span>Ύψη τοποθέτησης</span></label>
     <label class="switch-row"><input type="checkbox" data-v="notes" ${v.notes !== false ? 'checked' : ''}><span>Σημειώσεις</span></label>
     <label class="switch-row"><input type="checkbox" data-v="grid" ${v.grid !== false ? 'checked' : ''}><span>Πλέγμα</span></label>
-    <div class="slider-row"><label><span>Μέγεθος συμβόλων</span><span id="ssV">${Math.round((v.symScale || 1.3) * 100)}%</span></label><input type="range" min="60" max="250" step="5" value="${Math.round((v.symScale || 1.3) * 100)}" id="ssR"></div>`);
+    <div class="slider-row"><label><span>Μέγεθος συμβόλων</span><span id="ssV">${Math.round((v.symScale || 1.3) * 100)}%</span></label><input type="range" min="60" max="250" step="5" value="${Math.round((v.symScale || 1.3) * 100)}" id="ssR"></div>
+    <h4>Ύψη προεπιλογής (εκ.)</h4>
+    <div class="row2"><label class="fld"><span>Διακόπτες</span><input id="hSw" inputmode="numeric" value="${esc(v.hSwitch || '120')}"></label>
+    <label class="fld"><span>Πρίζες</span><input id="hSo" inputmode="numeric" value="${esc(v.hSocket || '40')}"></label></div>
+    <p class="note" style="margin-top:0">Δεν γράφονται δίπλα σε κάθε σύμβολο. Μπαίνουν μία φορά στο υπόμνημα του PDF. Γράφεται ύψος μόνο όπου το αλλάξεις.</p>`);
+    b.querySelector('#hSw').oninput = e => { v.hSwitch = e.target.value.trim() || '120'; saveSoon(); };
+    b.querySelector('#hSo').oninput = e => { v.hSocket = e.target.value.trim() || '40'; saveSoon(); };
     b.querySelector('#ssR').oninput = e => { v.symScale = e.target.value / 100; RD.setSymScale(v.symScale); b.querySelector('#ssV').textContent = e.target.value + '%'; saveSoon(); draw(); };
     b.querySelector('[data-a=photo]').onclick = () => (floor.photo ? photoSheet() : photoSource());
     b.querySelector('[data-a=circ]').onclick = () => circuitsSheet();
