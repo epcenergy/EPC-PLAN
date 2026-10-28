@@ -175,36 +175,36 @@
    * Επιστρέφει το εσωτερικό SVG μιας κάτοψης (σε συντεταγμένες κόσμου)
    * opts: { scale, sel:{kind,id}, linkFrom, showCircuits, showHeights, showNotes, exportMode }
    */
-  function floorSVG(floor, opts = {}) {
+  const LAYERS = ['fill', 'wall', 'open', 'label', 'link', 'item'];
+  /**
+   * Τα κομμάτια της κάτοψης ανά στρώση, το καθένα με κλειδί, ώστε η οθόνη να ξανασχεδιάζει μόνο ό,τι άλλαξε.
+   * opts: { scale, sel:{kind,id}, linkFrom, showCircuits, showHeights, showNotes, exportMode }
+   */
+  function floorParts(floor, opts = {}) {
     const sc = opts.scale || 1;
     const sel = opts.sel || {};
-    let out = '';
-
-    // χώροι – γέμισμα
+    const P = { fill: [], wall: [], open: [], label: [], link: [], item: [] };
+    const centers = floor.items.map(itemCenter);
     floor.rooms.forEach(r => {
       const isSel = sel.kind === 'room' && sel.id === r.id;
-      out += `<path d="${roomPathD(r.pts)}" fill="${isSel ? 'rgba(0,70,140,0.10)' : (opts.exportMode ? '#fff' : 'rgba(255,255,255,0.78)')}" stroke="none"/>`;
-    });
-    // τοίχοι
-    floor.rooms.forEach(r => {
-      out += `<path d="${roomPathD(r.pts)}" fill="none" stroke="#222" stroke-width="${WALL}" stroke-linejoin="miter"/>`;
-    });
-    // ανοίγματα
-    (floor.openings || []).forEach(o => {
-      out += openingSVG(o);
-      if (sel.kind === 'opening' && sel.id === o.id) {
-        out += `<g transform="translate(${f(o.x)},${f(o.y)}) rotate(${f(o.rot)})"><rect x="${-o.w / 2 - 6}" y="-10" width="${o.w + 12}" height="20" fill="none" stroke="${ACCENT}" stroke-width="${2.5 / sc}" stroke-dasharray="${6 / sc} ${4 / sc}"/></g>`;
-      }
-    });
-    // ετικέτες χώρων
-    floor.rooms.forEach(r => {
-      const avoid = floor.items.map(itemCenter).filter(c => G.inside(c, r.pts));
+      const d = roomPathD(r.pts);
+      P.fill.push([r.id, `<path d="${d}" fill="${isSel ? 'rgba(0,70,140,0.10)' : (opts.exportMode ? '#fff' : 'rgba(255,255,255,0.78)')}" stroke="none"/>`]);
+      P.wall.push([r.id, `<path d="${d}" fill="none" stroke="#222" stroke-width="${WALL}" stroke-linejoin="miter"/>`]);
+      const avoid = centers.filter(c => G.inside(c, r.pts));
       const p = G.labelPoint(r.pts, avoid);
       const b = G.bbox(r.pts);
-      const size = Math.max(9, Math.min(20, Math.min(b.w, b.h) / 6));
-      out += `<text x="${f(p[0])}" y="${f(p[1])}" font-size="${f(size)}" font-family="Arial,Helvetica,sans-serif" font-weight="800" fill="${BLUE}" fill-opacity="0.85" text-anchor="middle" dominant-baseline="central">${esc(r.name || '')}</text>`;
+      // το όνομα χωράει πάντα μέσα στον χώρο (δεν βγαίνει στον διπλανό)
+      const len = Math.max(1, (r.name || '').length);
+      const size = Math.max(5, Math.min(20, Math.min(b.w, b.h) / 6, (b.w * 0.88) / (0.62 * len)));
+      P.label.push([r.id, `<text x="${f(p[0])}" y="${f(p[1])}" font-size="${f(size)}" font-family="Arial,Helvetica,sans-serif" font-weight="800" fill="${BLUE}" fill-opacity="0.85" text-anchor="middle" dominant-baseline="central">${esc(r.name || '')}</text>`]);
     });
-    // συνδέσεις διακόπτη–φωτιστικού
+    (floor.openings || []).forEach(o => {
+      let s = openingSVG(o);
+      if (sel.kind === 'opening' && sel.id === o.id) {
+        s += `<g transform="translate(${f(o.x)},${f(o.y)}) rotate(${f(o.rot)})"><rect x="${-o.w / 2 - 6}" y="-10" width="${o.w + 12}" height="20" fill="none" stroke="${ACCENT}" stroke-width="${2.5 / sc}" stroke-dasharray="${6 / sc} ${4 / sc}"/></g>`;
+      }
+      P.open.push([o.id, s]);
+    });
     const byId = {};
     floor.items.forEach(i => (byId[i.id] = i));
     (floor.links || []).forEach(l => {
@@ -217,20 +217,25 @@
       const k = Math.min(30, len * 0.12);
       const qx = mx - (dy / len) * k, qy = my + (dx / len) * k;
       const isSel = sel.kind === 'link' && sel.id === l.id;
-      out += `<path d="M ${f(ax)} ${f(ay)} Q ${f(qx)} ${f(qy)} ${f(bx)} ${f(by)}" fill="none" stroke="${isSel ? ACCENT : '#0b5cad'}" stroke-width="${isSel ? 2.6 : 1.6}" stroke-dasharray="7 5" stroke-linecap="round"/>`;
+      P.link.push([l.id, `<path d="M ${f(ax)} ${f(ay)} Q ${f(qx)} ${f(qy)} ${f(bx)} ${f(by)}" fill="none" stroke="${isSel ? ACCENT : '#0b5cad'}" stroke-width="${isSel ? 2.6 : 1.6}" stroke-dasharray="7 5" stroke-linecap="round"/>`]);
     });
-    // σύμβολα
-    floor.items.forEach(it => {
-      out += itemSVG(it, opts);
+    floor.items.forEach((it, idx) => {
+      let s = itemSVG(it, opts);
       const isSel = sel.kind === 'item' && sel.id === it.id;
       const isFrom = opts.linkFrom === it.id;
       if (isSel || isFrom) {
-        const [cx, cy] = itemCenter(it);
-        out += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(Math.max(18 * SK, 20 / sc))}" fill="none" stroke="${isFrom ? '#27ae60' : ACCENT}" stroke-width="${f(2.5 / sc)}" stroke-dasharray="${f(6 / sc)} ${f(4 / sc)}"/>`;
+        const [cx, cy] = centers[idx];
+        s += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(Math.max(18 * SK, 20 / sc))}" fill="none" stroke="${isFrom ? '#27ae60' : ACCENT}" stroke-width="${f(2.5 / sc)}" stroke-dasharray="${f(6 / sc)} ${f(4 / sc)}"/>`;
       }
+      P.item.push([it.id, s]);
     });
-    return out;
+    return P;
   }
+  function floorSVG(floor, opts = {}) {
+    const P = floorParts(floor, opts);
+    return LAYERS.map(l => P[l].map(x => x[1]).join('')).join('');
+  }
+
 
   function floorBounds(floor) {
     const pts = [];
@@ -241,5 +246,5 @@
     return G.bbox(pts);
   }
 
-  window.EPC_RENDER = { setSymScale, get SK() { return SK; }, G, floorSVG, floorBounds, itemCenter, roomPathD, esc, BLUE, ACCENT, WALL };
+  window.EPC_RENDER = { floorParts, LAYERS, setSymScale, get SK() { return SK; }, G, floorSVG, floorBounds, itemCenter, roomPathD, esc, BLUE, ACCENT, WALL };
 })();

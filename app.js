@@ -7,7 +7,7 @@
   const esc = RD.esc;
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const clone = (o) => JSON.parse(JSON.stringify(o));
-  const APP_VERSION = '1.1.0';
+  const APP_VERSION = '1.3.0';
 
   // ---------- εικονίδια ----------
   const IC = {
@@ -350,11 +350,14 @@
   };
   try { ST.recent = JSON.parse(localStorage.getItem('epc_recent') || '[]'); } catch (e) { }
   if (!ST.recent.length) ST.recent = ['lamp', 'sw1', 'sw2', 'sw_ar', 'sock', 'sock2'];
-  const svg = $('#plan'), world = $('#world');
+  const svg = $('#plan'), world = $('#world'), layer = $('#layer'), stageEl = $('#stage');
   let stageW = 300, stageH = 300;
+  // το layer είναι 30% μεγαλύτερο από την οθόνη σε κάθε πλευρά, ώστε στο σύρσιμο να μη φαίνονται κενά
+  const PADF = 0.3;
+  const offX = () => stageW * PADF, offY = () => stageH * PADF;
 
   function resizeStage() {
-    const r = svg.getBoundingClientRect();
+    const r = stageEl.getBoundingClientRect();
     stageW = r.width; stageH = r.height;
     draw();
   }
@@ -412,8 +415,8 @@
     if (empty) {
       el.innerHTML = `<h4>Ξεκίνα την κάτοψη</h4><ol>
         <li>Φωτογράφισε το χειρόγραφο σκίτσο.</li>
-        <li>Ίσιωσέ το σέρνοντας τις 4 γωνίες του χαρτιού.</li>
-        <li>Με το «Χώρος» σχεδίασε κάθε δωμάτιο πάνω στη φωτογραφία – οι τοίχοι κουμπώνουν ίσιοι και στις 90°.</li>
+        <li>Έλεγξε τις 4 γωνίες του χαρτιού και πάτα «Ίσιωμα».</li>
+        <li>Οι χώροι αντιγράφονται αυτόματα με ίσιους τοίχους – δίνεις όνομα σε καθέναν με ένα πάτημα.</li>
         <li>Βάλε σύμβολα και ένωσε φωτιστικά με διακόπτες.</li></ol>
         <div class="row2"><button class="btn primary" id="ehCam">${'Φωτογραφία'}</button><button class="btn" id="ehSkip">Χωρίς φωτογραφία</button></div>`;
       $('#ehCam').onclick = () => photoSource();
@@ -423,22 +426,24 @@
 
   // ----- προβολή -----
   const toWorld = (sx, sy) => [(sx - ST.view.x) / ST.view.s, (sy - ST.view.y) / ST.view.s];
-  function fitView() {
+  function fitView(topFrac) {
+    const frac = typeof topFrac === 'number' ? topFrac : 1;
     let b = null;
     if (floor.rooms.length || floor.items.length) b = RD.floorBounds(floor);
-    if (floor.photo && floor.photo.visible !== false) {
+    if (frac === 1 && floor.photo && floor.photo.visible !== false) {
       const p = floor.photo, pb = { x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h };
       b = b ? { x0: Math.min(b.x0, pb.x0), y0: Math.min(b.y0, pb.y0), x1: Math.max(b.x1, pb.x1), y1: Math.max(b.y1, pb.y1) } : pb;
     }
     if (!b) b = { x0: 0, y0: 0, x1: 800, y1: 600 };
     const w = b.x1 - b.x0, h = b.y1 - b.y0, pad = 24;
-    const s = Math.min((stageW - pad * 2) / Math.max(w, 50), (stageH - pad * 2) / Math.max(h, 50));
+    const sh = stageH * frac;
+    const s = Math.min((stageW - pad * 2) / Math.max(w, 50), (sh - pad * 2) / Math.max(h, 50));
     ST.view.s = Math.max(0.05, Math.min(8, s));
     ST.view.x = stageW / 2 - ((b.x0 + b.x1) / 2) * ST.view.s;
-    ST.view.y = stageH / 2 - ((b.y0 + b.y1) / 2) * ST.view.s;
+    ST.view.y = sh / 2 - ((b.y0 + b.y1) / 2) * ST.view.s;
     draw();
   }
-  $('#fitBtn').onclick = fitView;
+  $('#fitBtn').onclick = () => fitView();
 
   let rafP = false;
   function draw() {
@@ -448,25 +453,57 @@
   }
   // μόνιμα στοιχεία: η φωτογραφία ΔΕΝ ξαναφορτώνεται σε κάθε σχεδίαση (αυτό έκανε την εφαρμογή να κολλάει)
   const NS = 'http://www.w3.org/2000/svg';
-  const gridEl = document.createElementNS(NS, 'rect'); gridEl.setAttribute('fill', 'url(#gridL)');
   const photoEl = document.createElementNS(NS, 'image'); photoEl.setAttribute('preserveAspectRatio', 'none');
   const contentEl = document.createElementNS(NS, 'g');
-  world.append(gridEl, photoEl, contentEl);
+  const overlayEl = document.createElementNS(NS, 'g');
+  world.append(photoEl, contentEl, overlayEl);
+  // μία ομάδα ανά στρώση· κάθε στοιχείο έχει κλειδί και αλλάζει μόνο αν άλλαξε το περιεχόμενό του
+  const layerEls = {}, keyed = {};
+  RD.LAYERS.forEach(l => { const g = document.createElementNS(NS, 'g'); contentEl.appendChild(g); layerEls[l] = g; keyed[l] = new Map(); });
+  const parseG = document.createElementNS(NS, 'g');
+  function patchLayer(l, parts) {
+    const g = layerEls[l], map = keyed[l], seen = new Set();
+    let prev = null;
+    for (const [key, str] of parts) {
+      seen.add(key);
+      let ent = map.get(key);
+      if (!ent || ent.str !== str) {
+        parseG.innerHTML = `<g>${str}</g>`;
+        const node = parseG.firstChild;
+        if (ent) g.replaceChild(node, ent.node); else g.insertBefore(node, prev ? prev.nextSibling : g.firstChild);
+        ent = { str, node }; map.set(key, ent);
+      }
+      prev = ent.node;
+    }
+    for (const [key, ent] of map) if (!seen.has(key)) { ent.node.remove(); map.delete(key); }
+  }
+  function resetLayers() { RD.LAYERS.forEach(l => { layerEls[l].textContent = ''; keyed[l].clear(); }); }
   let photoHref = null;
-  // μόνο μετακίνηση/ζουμ: αλλάζει ένα attribute, όχι όλο το σχέδιο
+  ST.rendered = { x: 0, y: 0, s: 1 };
+  // πλήρης προβολή (μετά από κάθε κίνηση)
   function drawView() {
     if (!floor) return;
-    const v = ST.view;
-    world.setAttribute('transform', `translate(${v.x},${v.y}) scale(${v.s})`);
-    if (cur.view.grid !== false) {
-      const [vx0, vy0] = toWorld(0, 0), [vx1, vy1] = toWorld(stageW, stageH);
-      gridEl.setAttribute('x', Math.floor(vx0 / 100) * 100 - 100); gridEl.setAttribute('y', Math.floor(vy0 / 100) * 100 - 100);
-      gridEl.setAttribute('width', vx1 - vx0 + 400); gridEl.setAttribute('height', vy1 - vy0 + 400);
-      gridEl.style.display = '';
-    } else gridEl.style.display = 'none';
+    const v = ST.view, ox = offX(), oy = offY();
+    world.setAttribute('transform', `translate(${v.x + ox},${v.y + oy}) scale(${v.s})`);
+    // πλέγμα ως φόντο CSS (πολύ πιο ελαφρύ από SVG pattern)
+    layer.classList.toggle('nogrid', cur.view.grid === false);
+    const B = 100 * v.s, b = 20 * v.s, px = `${v.x + ox}px ${v.y + oy}px`;
+    const minor = b >= 9 ? `${b}px ${b}px` : `${B}px ${B}px`;
+    layer.style.backgroundSize = `${B}px ${B}px, ${B}px ${B}px, ${minor}, ${minor}`;
+    layer.style.backgroundPosition = `${px}, ${px}, ${px}, ${px}`;
+    layer.style.transform = '';
+    ST.rendered = { ...v };
+  }
+  // κατά το σύρσιμο/ζουμ: μόνο μετασχηματισμός CSS (γίνεται από την κάρτα γραφικών, χωρίς επανασχεδίαση)
+  function gestureView() {
+    if (!floor) return;
+    const v = ST.view, R0 = ST.rendered, ox = offX(), oy = offY();
+    const k = v.s / R0.s;
+    const tx = (v.x + ox) - k * (R0.x + ox), ty = (v.y + oy) - k * (R0.y + oy);
+    layer.style.transform = `translate3d(${tx}px,${ty}px,0) scale(${k})`;
   }
   let rafV = false;
-  function drawViewSoon() { if (rafV) return; rafV = true; requestAnimationFrame(() => { rafV = false; drawView(); }); }
+  function drawViewSoon() { if (rafV) return; rafV = true; requestAnimationFrame(() => { rafV = false; gestureView(); }); }
   function drawNow() {
     if (!floor) return;
     drawView();
@@ -482,9 +519,11 @@
     } else photoEl.style.display = 'none';
     let out = '';
     if (ph && ph.visible !== false && ST.mode === 'photo') out += `<rect x="${ph.x}" y="${ph.y}" width="${ph.w}" height="${ph.h}" fill="none" stroke="${RD.ACCENT}" stroke-width="${3 / s}" stroke-dasharray="${8 / s} ${6 / s}" transform="rotate(${ph.rot || 0} ${ph.x + ph.w / 2} ${ph.y + ph.h / 2})"/>`;
-    out += RD.floorSVG(floor, { scale: s, sel: ST.sel, linkFrom: ST.linkFrom, showCircuits: cur.view.circuits, showHeights: cur.view.heights, showNotes: cur.view.notes });
+    if (ST.drawnFloor !== floor.id) { resetLayers(); ST.drawnFloor = floor.id; }
+    const P = RD.floorParts(floor, { scale: s, sel: ST.sel, linkFrom: ST.linkFrom, showCircuits: cur.view.circuits, showHeights: cur.view.heights, showNotes: cur.view.notes });
+    RD.LAYERS.forEach(l => patchLayer(l, P[l]));
     out += overlaySVG();
-    contentEl.innerHTML = out;
+    overlayEl.innerHTML = out;
   }
 
   function overlaySVG() {
@@ -531,17 +570,20 @@
 
   // ----- κούμπωμα (snap) -----
   const GRID = 10;
-  const snapG = (v, g = GRID) => Math.round(v / g) * g;
+  const snapG = (v, g = GRID) => Math.round(v / g) * g + 0; // +0: όχι «-0»
   // κουμπώνει σε πλέγμα και σε ευθυγράμμιση με κορυφές άλλων χώρων
-  function snapPoint(p, excludeRoom, excludeIdx = -1) {
-    const tol = 14 / ST.view.s;
+  // ownPts: σταθερά σημεία του ίδιου χώρου (από την αρχή του συρσίματος) – ποτέ τα σημεία που κινούνται,
+  // αλλιώς η γωνία «κολλάει» στην προηγούμενη θέση της και κινείται με τινάγματα
+  function snapPoint(p, excludeRoom, ownPts = []) {
+    const tol = 10 / ST.view.s;
     let x = snapG(p[0]), y = snapG(p[1]);
     let bx = null, by = null, dx = tol, dy = tol;
-    floor.rooms.forEach(r => r.pts.forEach((q, i) => {
-      if (r.id === excludeRoom && (excludeIdx < 0 || i === excludeIdx)) return;
+    const test = (q) => {
       if (Math.abs(q[0] - p[0]) < dx) { dx = Math.abs(q[0] - p[0]); bx = q[0]; }
       if (Math.abs(q[1] - p[1]) < dy) { dy = Math.abs(q[1] - p[1]); by = q[1]; }
-    }));
+    };
+    floor.rooms.forEach(r => { if (r.id !== excludeRoom) r.pts.forEach(test); });
+    ownPts.forEach(test);
     ST.guides = [];
     if (bx != null) { x = bx; ST.guides.push({ x: bx }); }
     if (by != null) { y = by; ST.guides.push({ y: by }); }
@@ -670,7 +712,7 @@
   let pinch = null;
   let lastTap = { t: 0, id: null };
 
-  const local = (e) => { const r = svg.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  const local = (e) => { const r = stageEl.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
 
   svg.addEventListener('pointerdown', e => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -855,15 +897,11 @@
     } else if (m === 'room' && ST.roomTool === 'poly') {
       polyTap(wp);
     } else if (m === 'symbol') {
-      if (ST.quick || !ST.placing) { quickTap(a.start, wp); return; }
-      const it = { id: uid(), type: ST.placing, x: 0, y: 0, rot: 0, circuit: '', height: '', note: '' };
-      const s = SY.byId[it.type];
-      if (s.labelDefault) it.label = nextPanelLabel(s);
-      if (ST.lastCircuit && ST.lastCircuit[it.type]) it.circuit = ST.lastCircuit[it.type];
+      if (!ST.placing) { hint('Διάλεξε πρώτα σύμβολο από την κάτω μπάρα'); return; }
+      const it = makeItem(ST.placing);
       placeOnWall(it, wp);
       floor.items.push(it);
-      ST.sel = { kind: 'item', id: it.id };
-      commit(); updateCtx();
+      commit(); draw();
       if (navigator.vibrate) navigator.vibrate(15);
     } else if (m === 'link') {
       linkTap(wp);
@@ -887,7 +925,7 @@
   }
   function dragVertex(a, wp) {
     const r = a.room, n = r.pts.length, i = a.i, o = a.orig;
-    const p = snapPoint(wp, r.id, i);
+    const p = snapPoint(wp, r.id, o.filter((_, k) => k !== i && k !== (i - 1 + n) % n && k !== (i + 1) % n));
     const pts = clone(o);
     if (r.free) { pts[i] = p; }
     else {
@@ -905,11 +943,13 @@
     const pts = clone(o);
     const A = o[i], B = o[j];
     if (!r.free && edgeIsHoriz(A, B, true) && Math.abs(B[1] - A[1]) < 0.01) {
-      let ny = snapPoint([A[0], A[1] + dW[1]], r.id, i)[1];
+      const fixed = o.filter((_, k) => k !== i && k !== j);
+      let ny = snapPoint([A[0], A[1] + dW[1]], r.id, fixed)[1];
       ST.guides = (ST.guides || []).filter(g => g.y != null);
       pts[i][1] = ny; pts[j][1] = ny;
     } else if (!r.free && Math.abs(B[0] - A[0]) < 0.01) {
-      let nx = snapPoint([A[0] + dW[0], A[1]], r.id, i)[0];
+      const fixed = o.filter((_, k) => k !== i && k !== j);
+      let nx = snapPoint([A[0] + dW[0], A[1]], r.id, fixed)[0];
       ST.guides = (ST.guides || []).filter(g => g.x != null);
       pts[i][0] = nx; pts[j][0] = nx;
     } else {
@@ -997,54 +1037,13 @@
     if (!isNew) setTimeout(() => inp.select(), 250);
   }
 
-  // ----- γρήγορη τοποθέτηση με πατήματα -----
-  // 1 = διακόπτης, 2 = πρίζα, 3 = διακόπτης + πρίζα, 4 = φωτιστικό
-  const QUICK = { 1: ['sw1'], 2: ['sock'], 3: ['sw1', 'sock'], 4: ['lamp'] };
-  const QNAME = { 1: 'Διακόπτης', 2: 'Πρίζα', 3: 'Διακόπτης + πρίζα', 4: 'Φωτιστικό' };
-  ST.quick = true;
-  const qb = document.createElement('div'); qb.className = 'qbadge'; $('#stage').appendChild(qb);
-  function quickTap(sp, wp) {
-    const Q = ST.qt, now = Date.now();
-    if (Q && now - Q.t < 450 && Math.hypot(sp[0] - Q.sp[0], sp[1] - Q.sp[1]) < 45) { Q.n = Math.min(4, Q.n + 1); Q.t = now; }
-    else { if (Q) quickCommit(); ST.qt = { n: 1, t: now, sp, wp }; }
-    const q = ST.qt;
-    qb.innerHTML = `<b>${q.n}</b>${QUICK[q.n].map(id => symIcon(id, 26)).join('')}<span>${QNAME[q.n]}</span>`;
-    qb.classList.add('show');
-    // μένει μέσα στην οθόνη
-    const half = qb.offsetWidth / 2 + 6;
-    qb.style.left = Math.max(half, Math.min(stageW - half, q.sp[0])) + 'px';
-    qb.style.top = Math.max(qb.offsetHeight + 30, q.sp[1]) + 'px';
-    if (navigator.vibrate) navigator.vibrate(8);
-    clearTimeout(ST.qtT); ST.qtT = setTimeout(quickCommit, 430);
-  }
+  const BASIC = ['sw1', 'sw2', 'sw_ar', 'sock', 'sock2', 'sock_wp', 'lamp', 'wall_lamp', 'spot'];
   function makeItem(type) {
     const it = { id: uid(), type, x: 0, y: 0, rot: 0, circuit: '', height: '', note: '' };
     const s = SY.byId[type];
     if (s.labelDefault) it.label = nextPanelLabel(s);
     if (ST.lastCircuit && ST.lastCircuit[type]) it.circuit = ST.lastCircuit[type];
     return it;
-  }
-  function quickCommit() {
-    clearTimeout(ST.qtT);
-    const Q = ST.qt; ST.qt = null;
-    qb.classList.remove('show');
-    if (!Q || !floor) return;
-    const types = QUICK[Q.n];
-    if (types.length === 1) {
-      const it = makeItem(types[0]); placeOnWall(it, Q.wp); floor.items.push(it);
-    } else {
-      // διακόπτης και πρίζα δίπλα-δίπλα στον ίδιο τοίχο
-      const a = makeItem(types[0]), b = makeItem(types[1]);
-      const onWall = placeOnWall(a, Q.wp);
-      const off = 15 * RD.SK, r = (a.rot || 0) * Math.PI / 180;
-      const tx = onWall ? Math.cos(r) : 1, ty = onWall ? Math.sin(r) : 0;
-      const x = a.x, y = a.y;
-      a.x = x - tx * off; a.y = y - ty * off;
-      b.x = x + tx * off; b.y = y + ty * off; b.rot = a.rot;
-      floor.items.push(a, b);
-    }
-    commit(); draw();
-    if (navigator.vibrate) navigator.vibrate(20);
   }
 
   // ----- σύνδεση -----
@@ -1081,15 +1080,13 @@
     updateCtx(); draw();
     const hints = {
       room: ST.roomTool === 'rect' ? 'Σύρε διαγώνια για ορθογώνιο χώρο' : 'Πάτα τις γωνίες του χώρου με τη σειρά',
-      symbol: ST.quick ? QHINT : 'Πάτα όπου θες να μπει: ' + (SY.byId[ST.placing] || {}).name,
+      symbol: ST.placing ? 'Πάτα όπου θες να μπει: ' + SY.byId[ST.placing].name : 'Διάλεξε σύμβολο από την κάτω μπάρα',
       link: 'Διακόπτης → φωτιστικά, ή φωτιστικά σε σειρά → διακόπτης',
       opening: 'Πάτα πάνω σε τοίχο για να μπει το κούφωμα',
       photo: 'Σύρε τη φωτογραφία για να τη μετακινήσεις',
     };
-    hint(hints[m] || '', m === 'symbol' && ST.quick ? 4000 : 2600);
-    if (m !== 'symbol') quickCommit();
+    hint(hints[m] || '');
   }
-  const QHINT = 'Πατήματα: 1 διακόπτης · 2 πρίζα · 3 διακόπτης+πρίζα · 4 φωτιστικό';
   let hintT = 0;
   function hint(t, ms = 2600) {
     const h = $('#hint');
@@ -1119,10 +1116,10 @@
         if (floor.photo) h += chip(IC.image + 'Φωτογραφία', 'photo');
       }
     } else if (m === 'symbol') {
-      h = `<button class="chip qchip ${ST.quick ? 'on' : ''}" data-a="quick">${[1, 2, 3, 4].map(n => `<span class="qn"><b>${n}</b>${QUICK[n].map(id => symIcon(id, 24)).join('')}</span>`).join('')}</button>`;
-      h += chip(IC.list + 'Όλα', 'palette');
-      h += ST.recent.slice(0, 8).map(id => `<button class="chip sym ${!ST.quick && ST.placing === id ? 'on' : ''}" data-sym="${id}">${symIcon(id, 34)}</button>`).join('');
-      if (sel.kind === 'item') h = itemChips() + `<span style="width:1px;align-self:stretch;background:#e0e6ee;flex:none"></span>` + h;
+      // σταθερά βασικά σύμβολα (δεν αλλάζουν θέση) + «Όλα» + όσα άλλα χρησιμοποιήθηκαν πρόσφατα
+      const symChip = id => `<button class="chip sym ${ST.placing === id ? 'on' : ''}" data-sym="${id}" aria-label="${esc(SY.byId[id].name)}">${symIcon(id, 34)}</button>`;
+      h = BASIC.map(symChip).join('') + chip(IC.list + 'Όλα', 'palette');
+      h += ST.recent.filter(id => SY.byId[id] && !BASIC.includes(id)).slice(0, 6).map(symChip).join('');
     } else if (m === 'link') {
       const f = ST.linkFrom && item(ST.linkFrom);
       h = `<span class="ctx-text">${f ? `Από: <b>${esc(SY.byId[f.type].name)}</b>. ${SY.byId[f.type].kind === 'switch' ? 'Πάτα φωτιστικά για σύνδεση.' : 'Πάτα επόμενο φωτιστικό ή τον διακόπτη για να κλείσει η σειρά.'}` : 'Πάτα διακόπτη → φωτιστικά, ή φωτιστικό → φωτιστικό → … → διακόπτη.'}</span>`;
@@ -1142,7 +1139,7 @@
     }
     bar.innerHTML = h;
     bar.classList.toggle('show', !!h);
-    requestAnimationFrame(() => { const r = svg.getBoundingClientRect(); if (Math.abs(r.height - stageH) > 1) resizeStage(); });
+    requestAnimationFrame(() => { const r = stageEl.getBoundingClientRect(); if (Math.abs(r.height - stageH) > 1 || Math.abs(r.width - stageW) > 1) resizeStage(); });
   }
   function itemChips() {
     return chip(IC.gear + 'Ιδιότητες', 'props', 'on') + chip(IC.rot, 'irot') + chip(IC.copy, 'idup') + chip(IC.link, 'ilink') + chip(IC.trash, 'idel', 'warn');
@@ -1171,7 +1168,6 @@
       case 'polycancel': finishDraft(false); break;
       case 'photo': photoSheet(); break;
       case 'palette': symbolPalette(); break;
-      case 'quick': ST.quick = true; ST.sel = {}; updateCtx(); draw(); hint(QHINT, 3500); break;
       case 'linkdone': ST.linkFrom = null; updateCtx(); draw(); break;
       case 'photoset': photoSheet(); break;
       case 'photodone': setMode('select'); break;
@@ -1272,7 +1268,6 @@
   // ----- παλέτα συμβόλων -----
   function pickSymbol(id) {
     ST.placing = id;
-    ST.quick = false;
     ST.recent = [id, ...ST.recent.filter(x => x !== id)].slice(0, 10);
     try { localStorage.setItem('epc_recent', JSON.stringify(ST.recent)); } catch (e) { }
     if (ST.mode !== 'symbol') setMode('symbol');
@@ -1567,8 +1562,89 @@
     else { x = 0; y = 0; }
     floor.photo = { data, x, y, w: prev ? prev.w : w, h: prev ? prev.w * aspect : h, rot: 0, opacity: 0.55, visible: true };
     saveSoon(); updateEmpty(); fitView();
-    setMode('room');
-    hint('Τώρα σχεδίασε τους χώρους πάνω στη φωτογραφία', 3500);
+    autoRooms(canvas);
+  }
+
+  // ----- αυτόματη αντιγραφή χώρων από τη φωτογραφία -----
+  async function autoRooms(canvas) {
+    const ph = floor.photo;
+    if (!ph) return;
+    let mode = 'replace';
+    if (floor.rooms.length) {
+      mode = await new Promise(res => {
+        const b = Sheet.open(`<h3>Αυτόματη αντιγραφή χώρων</h3><p class="note">Η κάτοψη έχει ήδη ${floor.rooms.length} χώρους.</p>
+          <div class="btn-col"><button class="btn primary" data-v="replace">Αντικατάσταση με τους νέους</button>
+          <button class="btn" data-v="add">Προσθήκη στους υπάρχοντες</button>
+          <button class="btn" data-v="no">Όχι, θα σχεδιάσω μόνος μου</button></div>`, { onClose: () => res('no') });
+        b.querySelectorAll('[data-v]').forEach(x => x.onclick = () => { Sheet.onClose = null; Sheet.close(); res(x.dataset.v); });
+      });
+      if (mode === 'no') { setMode('room'); return; }
+    }
+    busy(true, 'Αναγνώριση χώρων…');
+    await new Promise(r => setTimeout(r, 40));
+    let res;
+    try { res = window.EPC_DETECT.detect(canvas); } catch (e) { console.error(e); res = { rooms: [] }; }
+    busy(false);
+    if (!res.rooms.length) {
+      setMode('room');
+      Sheet.open(`<h3>Δεν βρέθηκαν κλειστοί χώροι</h3><p class="note">Για να τους βρίσκει μόνη της η εφαρμογή:<br>• κάθε χώρος να είναι κλειστό κουτί (οι πόρτες μπαίνουν μετά από το πρόγραμμα)<br>• γραμμές με στυλό, όχι πολύ αχνό μολύβι<br>• φωτογραφία από πάνω, με καλό φως<br><br>Μπορείς να σχεδιάσεις τους χώρους πάνω στη φωτογραφία με το «Χώρος».</p>`);
+      return;
+    }
+    const kx = ph.w / res.W, ky = ph.h / res.H;
+    const toW = p => [snapG(ph.x + p[0] * kx), snapG(ph.y + p[1] * ky)];
+    if (mode === 'replace') {
+      floor.rooms = [];
+    }
+    const ids = [];
+    res.rooms.forEach(pts => {
+      const w = G.simplify(pts.map(toW));
+      if (w.length < 4 || Math.abs(G.area(w)) < 900) return;
+      const r = { id: uid(), name: nextNumbered('Χώρος'), pts: w, free: false };
+      floor.rooms.push(r); ids.push(r.id);
+    });
+    ph.opacity = 0.25;
+    commit();
+    setMode('select');
+    toast(`Βρέθηκαν ${ids.length} χώροι`, 2500);
+    nameWizard(ids, 0);
+  }
+
+  // ονομασία χώρων ένας-ένας με ένα πάτημα
+  function nameWizard(ids, i) {
+    if (i >= ids.length) { ST.sel = {}; $('#sheetBack').classList.remove('light'); fitView(); updateCtx(); return; }
+    const r = room(ids[i]);
+    if (!r) { nameWizard(ids, i + 1); return; }
+    ST.sel = { kind: 'room', id: r.id };
+    fitView(0.4);
+    const used = floor.rooms.map(x => x.name);
+    const chips = [nextNumbered('Δωμάτιο'), ...ROOM_NAMES];
+    const b = Sheet.open(`<h3 style="margin-bottom:4px">Χώρος ${i + 1} από ${ids.length}: πώς λέγεται;</h3>
+      <p class="note" style="margin:0 0 10px">Ο χώρος φαίνεται χρωματισμένος στο σχέδιο.</p>
+      <div class="chips wiz">${chips.map(c => `<button class="chip ${used.includes(c) && c !== r.name ? 'used' : ''}" data-v="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+      <div class="row2" style="margin-top:12px"><input id="wzIn" class="sym-search" style="margin:0" placeholder="Άλλο όνομα…"><button class="btn primary" data-a="ok" style="flex:0 0 70px">OK</button></div>
+      <div class="row2" style="margin-top:10px"><button class="btn" data-a="skip">Παράλειψη</button><button class="btn" data-a="end">Τέλος</button></div>`,
+      { onClose: () => { ST.sel = {}; $('#sheetBack').classList.remove('light'); fitView(); updateCtx(); } });
+    $('#sheetBack').classList.add('light');
+    const next = (name) => {
+      if (name) { r.name = name; commit(); }
+      Sheet.onClose = null; Sheet.close();
+      setTimeout(() => nameWizard(ids, i + 1), 120);
+    };
+    b.querySelectorAll('[data-v]').forEach(c => c.onclick = () => next(c.dataset.v));
+    const inp = b.querySelector('#wzIn');
+    b.querySelector('[data-a=ok]').onclick = () => next(inp.value.trim());
+    inp.onkeydown = e => { if (e.key === 'Enter') next(inp.value.trim()); };
+    b.querySelector('[data-a=skip]').onclick = () => next('');
+    b.querySelector('[data-a=end]').onclick = () => { Sheet.close(); };
+  }
+  async function autoRoomsFromPhoto() {
+    const ph = floor.photo;
+    if (!ph) return;
+    const img = await loadImage(ph.data);
+    const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+    c.getContext('2d').drawImage(img, 0, 0);
+    if (ph.rot) toast('Η περιστροφή της φωτογραφίας αγνοείται στην αναγνώριση');
+    autoRooms(c);
   }
   function photoSheet() {
     const p = floor.photo;
@@ -1584,7 +1660,9 @@
         <button class="act" data-a="new">${IC.camera}Νέα</button>
         <button class="act danger" data-a="del">${IC.trash}Αφαίρεση</button>
       </div>
+      <button class="btn primary" style="width:100%;margin-top:14px" data-a="auto">Αυτόματη αντιγραφή χώρων</button>
       <p class="note" style="margin-top:12px">Η φωτογραφία δεν εμφανίζεται στο PDF – είναι μόνο οδηγός για τη σχεδίαση.</p>`);
+    b.querySelector('[data-a=auto]').onclick = () => { Sheet.close(); setTimeout(autoRoomsFromPhoto, 260); };
     b.querySelector('#phVis').onchange = e => { p.visible = e.target.checked; saveSoon(); draw(); };
     b.querySelector('#phO').oninput = e => { p.opacity = e.target.value / 100; b.querySelector('#phOv').textContent = e.target.value + '%'; draw(); saveSoon(); };
     b.querySelector('#phS').oninput = e => {
@@ -1636,7 +1714,8 @@
         const d = g.getImageData(0, 0, sw, sh).data;
         const lum = new Float32Array(sw * sh);
         let sum = 0;
-        for (let i = 0; i < sw * sh; i++) { lum[i] = (d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11); sum += lum[i]; }
+        // λογαριθμική φωτεινότητα: το χαρτί ξεχωρίζει από το τραπέζι ακόμα και κάτω από σκιά
+        for (let i = 0; i < sw * sh; i++) { const l = d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11; lum[i] = Math.log(1 + l) / Math.log(256) * 255; sum += lum[i]; }
         // κατώφλι Otsu
         const hist = new Array(256).fill(0); lum.forEach(v => hist[v | 0]++);
         let total = sw * sh, sumB = 0, wB = 0, max = 0, thr = 128, sumAll = 0;
@@ -1825,6 +1904,7 @@
   })();
 
   // ================= ΕΚΚΙΝΗΣΗ =================
+  ['gesturestart', 'gesturechange'].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive: false }));
   window.addEventListener('popstate', () => { });
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => { });

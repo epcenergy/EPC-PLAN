@@ -6,8 +6,12 @@
   const BLUE = '#00468c', ORANGE = '#f7a93a';
   const esc = (s) => R().esc(s);
 
-  let logoData = null;
+  let logoData = null, logoImg = null;
+  function loadLogoImg() {
+    return new Promise(res => { const i = new Image(); i.onload = () => { logoImg = i; res(); }; i.onerror = () => res(); i.src = './icon-192.png'; });
+  }
   async function logo() {
+    if (!logoImg) await loadLogoImg();
     if (logoData) return logoData;
     try {
       const b = await (await fetch('./icon-192.png')).blob();
@@ -25,7 +29,7 @@
 
   function header(project, subtitle, lg, page, pages) {
     let s = `<rect x="0" y="0" width="${W}" height="150" fill="${BLUE}"/>`;
-    if (lg) s += `<image href="${lg}" x="30" y="20" width="110" height="110"/>`;
+    // το λογότυπο ζωγραφίζεται χωριστά πάνω στο canvas (το Safari του iPhone δεν φορτώνει πάντα εικόνες μέσα σε SVG)
     s += text(165, 70, 'EPC PLAN', 50, '#fff', 800);
     s += text(165, 118, subtitle, 30, ORANGE, 700);
     const right = [];
@@ -191,6 +195,7 @@
         const g = c.getContext('2d');
         g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
         g.drawImage(img, 0, 0, c.width, c.height);
+        if (logoImg) { try { g.drawImage(logoImg, 30 * scale, 20 * scale, 110 * scale, 110 * scale); } catch (e) { } }
         res(c);
       };
       img.onerror = () => rej(new Error('Αποτυχία σχεδίασης σελίδας'));
