@@ -1,7 +1,7 @@
 /* EPC PLAN – λειτουργία χωρίς internet
    Ανοίγει αμέσως από τη μνήμη του κινητού (χωρίς αναμονή για σήμα)
    και ενημερώνεται στο παρασκήνιο για την επόμενη φορά. */
-const CACHE = 'epcplan-v1.3.0';
+const CACHE = 'epcplan-v1.4.0';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'app.css',
   'symbols.js', 'render.js', 'db.js', 'export.js', 'detect.js', 'app.js',

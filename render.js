@@ -107,7 +107,20 @@
   };
 
   // κέντρο οπτικό συμβόλου (για γραμμές σύνδεσης, επιλογή, ετικέτες)
+  // κέντρο ταινίας LED: το μέσο της διαδρομής
+  function polyMid(pts) {
+    let tot = 0;
+    for (let i = 1; i < pts.length; i++) tot += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+    let h = tot / 2;
+    for (let i = 1; i < pts.length; i++) {
+      const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      if (h <= l && l > 0) { const t = h / l; return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t]; }
+      h -= l;
+    }
+    return pts[0].slice();
+  }
   function itemCenter(it) {
+    if (it.pts && it.pts.length >= 2) return polyMid(it.pts);
     const s = SY().byId[it.type];
     if (!s || s.mount !== 'wall') return [it.x, it.y];
     const r = (it.rot * Math.PI) / 180;
@@ -156,7 +169,14 @@
   function itemSVG(it, opts) {
     const s = SY().byId[it.type];
     if (!s) return '';
-    let out = `<g transform="translate(${f(it.x)},${f(it.y)}) rotate(${f(it.rot || 0)}) scale(${SK})">${s.draw(it.rot || 0)}</g>`;
+    let out;
+    if (it.pts && it.pts.length >= 2) {
+      // ταινία LED σχεδιασμένη γωνία-γωνία
+      const pp = it.pts.map(p => f(p[0]) + ',' + f(p[1])).join(' ');
+      out = `<polyline points="${pp}" fill="none" stroke="#ffd34d" stroke-width="${f(7 * SK)}" stroke-linejoin="round" stroke-linecap="round" opacity="0.75"/>`
+        + `<polyline points="${pp}" fill="none" stroke="#111" stroke-width="${f(2.4 * SK)}" stroke-dasharray="${f(6 * SK)} ${f(3 * SK)}" stroke-linejoin="round"/>`
+        + [it.pts[0], it.pts[it.pts.length - 1]].map(p => `<circle cx="${f(p[0])}" cy="${f(p[1])}" r="${f(2.6 * SK)}" fill="#111"/>`).join('');
+    } else out = `<g transform="translate(${f(it.x)},${f(it.y)}) rotate(${f(it.rot || 0)}) scale(${SK})">${s.draw(it.rot || 0)}</g>`;
     const k = SK;
     const [cx, cy] = itemCenter(it);
     const tx = (x, y, txt, size, color, weight = 700, anchor = 'start') =>
@@ -175,6 +195,9 @@
    * Επιστρέφει το εσωτερικό SVG μιας κάτοψης (σε συντεταγμένες κόσμου)
    * opts: { scale, sel:{kind,id}, linkFrom, showCircuits, showHeights, showNotes, exportMode }
    */
+  const LINK = '#e3001b';
+  // καμπύλη (τόξο) της γραμμής σύνδεσης
+  const linkBend = (len) => Math.min(140, len * 0.28);
   const LAYERS = ['fill', 'wall', 'open', 'label', 'link', 'item'];
   /**
    * Τα κομμάτια της κάτοψης ανά στρώση, το καθένα με κλειδί, ώστε η οθόνη να ξανασχεδιάζει μόνο ό,τι άλλαξε.
@@ -214,10 +237,10 @@
       // ελαφρώς καμπύλη για να ξεχωρίζουν οι γραμμές
       const mx = (ax + bx) / 2, my = (ay + by) / 2;
       const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
-      const k = Math.min(30, len * 0.12);
+      const k = linkBend(len);
       const qx = mx - (dy / len) * k, qy = my + (dx / len) * k;
       const isSel = sel.kind === 'link' && sel.id === l.id;
-      P.link.push([l.id, `<path d="M ${f(ax)} ${f(ay)} Q ${f(qx)} ${f(qy)} ${f(bx)} ${f(by)}" fill="none" stroke="${isSel ? ACCENT : '#0b5cad'}" stroke-width="${isSel ? 2.6 : 1.6}" stroke-dasharray="7 5" stroke-linecap="round"/>`]);
+      P.link.push([l.id, `<path d="M ${f(ax)} ${f(ay)} Q ${f(qx)} ${f(qy)} ${f(bx)} ${f(by)}" fill="none" stroke="${isSel ? ACCENT : LINK}" stroke-width="${isSel ? 3 : 1.9}" stroke-dasharray="7 5" stroke-linecap="round"/>`]);
     });
     floor.items.forEach((it, idx) => {
       let s = itemSVG(it, opts);
@@ -240,11 +263,14 @@
   function floorBounds(floor) {
     const pts = [];
     floor.rooms.forEach(r => r.pts.forEach(p => pts.push(p)));
-    floor.items.forEach(i => { pts.push([i.x - 22 * SK, i.y - 30 * SK]); pts.push([i.x + 30 * SK, i.y + 22 * SK]); });
+    floor.items.forEach(i => {
+      if (i.pts) i.pts.forEach(p => pts.push(p));
+      pts.push([i.x - 22 * SK, i.y - 30 * SK]); pts.push([i.x + 30 * SK, i.y + 22 * SK]);
+    });
     (floor.openings || []).forEach(o => { pts.push([o.x - o.w, o.y - o.w]); pts.push([o.x + o.w, o.y + o.w]); });
     if (!pts.length) return { x0: 0, y0: 0, x1: 600, y1: 400, w: 600, h: 400 };
     return G.bbox(pts);
   }
 
-  window.EPC_RENDER = { floorParts, LAYERS, setSymScale, get SK() { return SK; }, G, floorSVG, floorBounds, itemCenter, roomPathD, esc, BLUE, ACCENT, WALL };
+  window.EPC_RENDER = { linkBend, LINK, polyMid, floorParts, LAYERS, setSymScale, get SK() { return SK; }, G, floorSVG, floorBounds, itemCenter, roomPathD, esc, BLUE, ACCENT, WALL };
 })();

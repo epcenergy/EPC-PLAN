@@ -7,7 +7,7 @@
   const esc = RD.esc;
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const clone = (o) => JSON.parse(JSON.stringify(o));
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.4.0';
 
   // ---------- εικονίδια ----------
   const IC = {
@@ -405,7 +405,9 @@
     saveSoon(); updateUndo(); updateCtx(); draw(); updateEmpty();
   }
   function updateUndo() { $('#undoBtn').disabled = ST.hi <= 0; $('#redoBtn').disabled = ST.hi >= ST.hist.length - 1; }
-  $('#undoBtn').onclick = () => { if (ST.draft) { finishDraft(false); return; } if (ST.hi > 0) { ST.hi--; restore(ST.hist[ST.hi]); toast('Αναίρεση', 900); } };
+  $('#undoBtn').onclick = () => {
+    if (ST.draft && ST.draft.type === 'strip') { ST.draft.pts.pop(); if (!ST.draft.pts.length) ST.draft = null; updateCtx(); draw(); return; }
+    if (ST.draft) { finishDraft(false); return; } if (ST.hi > 0) { ST.hi--; restore(ST.hist[ST.hi]); toast('Αναίρεση', 900); } };
   $('#redoBtn').onclick = () => { if (ST.hi < ST.hist.length - 1) { ST.hi++; restore(ST.hist[ST.hi]); } };
 
   function updateEmpty() {
@@ -557,6 +559,16 @@
       o += `<polyline points="${pts.map(p => p.join(',')).join(' ')}" fill="rgba(0,70,140,.08)" stroke="${RD.BLUE}" stroke-width="${4 / s}" stroke-linejoin="round"/>`;
       d.pts.forEach((p, i) => (o += `<circle cx="${p[0]}" cy="${p[1]}" r="${(i === 0 ? 13 : 7) / s}" fill="${i === 0 ? '#27ae60' : '#fff'}" stroke="${RD.BLUE}" stroke-width="${2.5 / s}"/>`));
     }
+    if (d && d.type === 'strip' && d.pts.length) {
+      const pts = d.pts.slice();
+      o += `<polyline points="${pts.map(p => p.join(',')).join(' ')}" fill="none" stroke="#ffd34d" stroke-width="${8 / s}" stroke-linejoin="round" stroke-linecap="round"/>`;
+      o += `<polyline points="${pts.map(p => p.join(',')).join(' ')}" fill="none" stroke="#111" stroke-width="${2.5 / s}" stroke-dasharray="${7 / s} ${4 / s}"/>`;
+      d.pts.forEach((p, i) => (o += `<circle cx="${p[0]}" cy="${p[1]}" r="${(i === d.pts.length - 1 ? 11 : 7) / s}" fill="${i === d.pts.length - 1 ? '#27ae60' : '#fff'}" stroke="#111" stroke-width="${2.5 / s}"/>`));
+    }
+    if (ST.sel.kind === 'item' && ST.mode === 'select') {
+      const it = item(ST.sel.id);
+      if (it && it.pts) it.pts.forEach(p => (o += `<circle cx="${p[0]}" cy="${p[1]}" r="${hr}" fill="#fff" stroke="${RD.ACCENT}" stroke-width="${3.5 / s}"/>`));
+    }
     if (ST.guides) ST.guides.forEach(g => {
       if (g.x != null) o += `<line x1="${g.x}" y1="-100000" x2="${g.x}" y2="100000" stroke="#e74c3c" stroke-width="${1 / s}" stroke-dasharray="${5 / s} ${4 / s}"/>`;
       if (g.y != null) o += `<line x1="-100000" y1="${g.y}" x2="100000" y2="${g.y}" stroke="#e74c3c" stroke-width="${1 / s}" stroke-dasharray="${5 / s} ${4 / s}"/>`;
@@ -648,7 +660,7 @@
     if (!a || !b) return null;
     const [ax, ay] = RD.itemCenter(a), [bx, by] = RD.itemCenter(b);
     const mx = (ax + bx) / 2, my = (ay + by) / 2, dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
-    const k = Math.min(30, len * 0.12);
+    const k = RD.linkBend(len);
     const qx = mx - (dy / len) * k, qy = my + (dx / len) * k;
     const pts = [];
     for (let i = 0; i <= 16; i++) {
@@ -660,6 +672,15 @@
   function hitTest(p, opts = {}) {
     const s = ST.view.s;
     const hr = Math.max(8, 24 / s);
+    // λαβές επιλεγμένης ταινίας LED
+    if (!opts.noHandles && ST.sel.kind === 'item') {
+      const it = item(ST.sel.id);
+      if (it && it.pts) {
+        let bi = -1, bd = hr;
+        it.pts.forEach((q, i) => { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < bd) { bd = d; bi = i; } });
+        if (bi >= 0) return { kind: 'spt', id: it.id, i: bi };
+      }
+    }
     // λαβές επιλεγμένου χώρου
     if (!opts.noHandles && ST.sel.kind === 'room') {
       const r = room(ST.sel.id);
@@ -679,8 +700,15 @@
     // σύμβολα
     let best = null, bd = Math.max(14 * RD.SK, 26 / s);
     floor.items.forEach(it => {
-      const c = RD.itemCenter(it);
-      const d = Math.hypot(c[0] - p[0], c[1] - p[1]);
+      let d;
+      if (it.pts && it.pts.length >= 2) {
+        d = Infinity;
+        for (let i = 1; i < it.pts.length; i++) d = Math.min(d, G.segDist(p, it.pts[i - 1], it.pts[i]).d);
+        d = d * 1.2 + 4; // οι ταινίες είναι μακριές: προτεραιότητα στα σημειακά σύμβολα
+      } else {
+        const c = RD.itemCenter(it);
+        d = Math.hypot(c[0] - p[0], c[1] - p[1]);
+      }
       if (d < bd) { bd = d; best = { kind: 'item', id: it.id }; }
     });
     if (best) return best;
@@ -796,7 +824,9 @@
     }
     if (m === 'select') {
       const h = hitTest(wp);
-      if (h && (h.kind === 'vertex' || h.kind === 'edge')) {
+      if (h && h.kind === 'spt') {
+        a.kind = 'spt'; a.id = h.id; a.i = h.i; a.hit = h;
+      } else if (h && (h.kind === 'vertex' || h.kind === 'edge')) {
         const r = room(h.id);
         a.kind = h.kind; a.room = r; a.i = h.i; a.orig = clone(r.pts);
       } else if (h && h.kind === 'item') {
@@ -836,6 +866,15 @@
         ST.draft.b = snapPoint(wp);
         break;
       case 'vertex': dragVertex(a, wp); a.dirty = true; break;
+      case 'spt': {
+        const it = item(a.id), i = a.i;
+        let p = snapPoint(wp);
+        // κουμπώνει σε ευθεία (0/90°) με τα διπλανά σημεία όταν είναι κοντά
+        const tol = 12 / ST.view.s;
+        [it.pts[i - 1], it.pts[i + 1]].forEach(q => { if (!q) return; if (Math.abs(p[0] - q[0]) < tol) p[0] = q[0]; if (Math.abs(p[1] - q[1]) < tol) p[1] = q[1]; });
+        it.pts[i] = p; if (i === 0) { it.x = p[0]; it.y = p[1]; }
+        a.dirty = true; break;
+      }
       case 'edge': dragEdge(a, dW); a.dirty = true; break;
       case 'roommove': {
         const dx = snapG(dW[0]), dy = snapG(dW[1]);
@@ -848,8 +887,14 @@
       case 'item': {
         const it = item(a.id);
         if (ST.sel.id !== it.id) { ST.sel = { kind: 'item', id: it.id }; updateCtx(); }
-        const wall = SY.byId[it.type].mount === 'wall';
-        placeOnWall(it, wall ? wp : [wp[0] + a.off[0], wp[1] + a.off[1]]);
+        if (it.pts) {
+          const nx = snapG(wp[0] + a.off[0], 5), ny = snapG(wp[1] + a.off[1], 5);
+          const dx = nx - it.x, dy = ny - it.y;
+          it.pts = it.pts.map(p => [p[0] + dx, p[1] + dy]); it.x = nx; it.y = ny;
+        } else {
+          const wall = SY.byId[it.type].mount === 'wall';
+          placeOnWall(it, wall ? wp : [wp[0] + a.off[0], wp[1] + a.off[1]]);
+        }
         a.dirty = true;
         break;
       }
@@ -898,6 +943,7 @@
       polyTap(wp);
     } else if (m === 'symbol') {
       if (!ST.placing) { hint('Διάλεξε πρώτα σύμβολο από την κάτω μπάρα'); return; }
+      if (ST.placing === 'led_strip') { stripTap(wp); return; }
       const it = makeItem(ST.placing);
       placeOnWall(it, wp);
       floor.items.push(it);
@@ -989,7 +1035,32 @@
     $('#emptyHelp').classList.remove('show');
     updateCtx(); draw();
   }
+  // ----- ταινία LED γωνία-γωνία -----
+  function stripTap(wp) {
+    if (!ST.draft || ST.draft.type !== 'strip') { ST.draft = { type: 'strip', pts: [], ortho: !ST.freeDraw }; hint('Πάτα τα σημεία της ταινίας. Ξανά στο τελευταίο ή «Τέλος» για ολοκλήρωση', 4000); }
+    const d = ST.draft, last = d.pts[d.pts.length - 1];
+    if (last && d.pts.length >= 2 && Math.hypot(wp[0] - last[0], wp[1] - last[1]) < 22 / ST.view.s) { finishStrip(); return; }
+    let p = snapPoint(wp);
+    if (last && d.ortho) { if (Math.abs(p[0] - last[0]) > Math.abs(p[1] - last[1])) p[1] = last[1]; else p[0] = last[0]; }
+    ST.guides = null;
+    if (last && Math.hypot(p[0] - last[0], p[1] - last[1]) < 5) return;
+    d.pts.push(p);
+    updateCtx(); draw();
+  }
+  function finishStrip() {
+    const d = ST.draft;
+    ST.draft = null;
+    if (d && d.type === 'strip' && d.pts.length >= 2) {
+      const it = makeItem('led_strip');
+      it.pts = d.pts; it.x = d.pts[0][0]; it.y = d.pts[0][1];
+      floor.items.push(it);
+      commit();
+      if (navigator.vibrate) navigator.vibrate(15);
+    } else if (d && d.type === 'strip' && d.pts.length) toast('Η ταινία θέλει τουλάχιστον 2 σημεία');
+    updateCtx(); draw();
+  }
   function finishDraft(close) {
+    if (ST.draft && ST.draft.type === 'strip') { finishStrip(); return; }
     const d = ST.draft;
     ST.draft = null;
     if (close && d && d.type === 'poly' && d.pts.length >= 3) {
@@ -1037,7 +1108,7 @@
     if (!isNew) setTimeout(() => inp.select(), 250);
   }
 
-  const BASIC = ['sw1', 'sw2', 'sw_ar', 'sock', 'sock2', 'sock_wp', 'lamp', 'wall_lamp', 'spot'];
+  const BASIC = ['sw1', 'sw2', 'sw_ar', 'sock', 'sock2', 'sock_wp', 'lamp', 'wall_lamp', 'spot', 'led_strip'];
   function makeItem(type) {
     const it = { id: uid(), type, x: 0, y: 0, rot: 0, circuit: '', height: '', note: '' };
     const s = SY.byId[type];
@@ -1072,6 +1143,7 @@
 
   // ================= ΛΕΙΤΟΥΡΓΙΕΣ / ΜΠΑΡΕΣ =================
   function setMode(m) {
+    if (ST.draft && ST.draft.type === 'strip') finishStrip();
     if (ST.draft && m !== 'room') finishDraft(false);
     ST.mode = m;
     if (m !== 'link') ST.linkFrom = null;
@@ -1118,6 +1190,12 @@
     } else if (m === 'symbol') {
       // σταθερά βασικά σύμβολα (δεν αλλάζουν θέση) + «Όλα» + όσα άλλα χρησιμοποιήθηκαν πρόσφατα
       const symChip = id => `<button class="chip sym ${ST.placing === id ? 'on' : ''}" data-sym="${id}" aria-label="${esc(SY.byId[id].name)}">${symIcon(id, 34)}</button>`;
+      if (ST.draft && ST.draft.type === 'strip') {
+        bar.innerHTML = chip(IC.undo + 'Σημείο', 'polyundo') + chip(IC.check + 'Τέλος', 'stripdone', ST.draft.pts.length >= 2 ? 'ok' : '') + chip(IC.x + 'Ακύρωση', 'stripcancel', 'warn') +
+          chip(IC.square + (ST.freeDraw ? 'Ελεύθερο' : '90°'), 'freedraw', ST.freeDraw ? '' : 'on') + `<span class="ctx-text">Ταινία LED · ${ST.draft.pts.length} σημεία</span>`;
+        bar.classList.add('show');
+        return;
+      }
       h = BASIC.map(symChip).join('') + chip(IC.list + 'Όλα', 'palette');
       h += ST.recent.filter(id => SY.byId[id] && !BASIC.includes(id)).slice(0, 6).map(symChip).join('');
     } else if (m === 'link') {
@@ -1162,7 +1240,9 @@
     switch (a) {
       case 'tool-rect': ST.roomTool = 'rect'; finishDraft(false); setMode('room'); break;
       case 'tool-poly': ST.roomTool = 'poly'; setMode('room'); break;
-      case 'freedraw': ST.freeDraw = !ST.freeDraw; updateCtx(); if (ST.freeDraw) hint('Ελεύθερο σχήμα: λοξοί τοίχοι επιτρέπονται'); break;
+      case 'freedraw': ST.freeDraw = !ST.freeDraw; if (ST.draft) ST.draft.ortho = !ST.freeDraw; updateCtx(); if (ST.freeDraw) hint('Ελεύθερο σχήμα: λοξοί τοίχοι επιτρέπονται'); break;
+      case 'stripdone': finishStrip(); break;
+      case 'stripcancel': ST.draft = null; updateCtx(); draw(); break;
       case 'polyundo': if (ST.draft) { ST.draft.pts.pop(); if (!ST.draft.pts.length) ST.draft = null; updateCtx(); draw(); } break;
       case 'polyclose': finishDraft(true); break;
       case 'polycancel': finishDraft(false); break;
@@ -1172,7 +1252,7 @@
       case 'photoset': photoSheet(); break;
       case 'photodone': setMode('select'); break;
       case 'props': openProps(); break;
-      case 'irot': if (it) { it.rot = ((it.rot || 0) + 90) % 360; commit(); draw(); } break;
+      case 'irot': if (it) { rotateItem(it); } break;
       case 'idup': if (it) duplicateItem(it); break;
       case 'ilink': if (it) { setMode('link'); ST.linkFrom = it.id; updateCtx(); draw(); } break;
       case 'idel': if (it) deleteItem(it); break;
@@ -1194,10 +1274,19 @@
     }
   });
 
+  function rotateItem(it) {
+    if (it.pts) {
+      const [cx, cy] = RD.itemCenter(it);
+      it.pts = it.pts.map(([x, y]) => [snapG(cx - (y - cy), 5), snapG(cy + (x - cx), 5)]);
+      it.x = it.pts[0][0]; it.y = it.pts[0][1];
+    } else it.rot = ((it.rot || 0) + 90) % 360;
+    commit(); draw();
+  }
   function duplicateItem(it) {
     const c = clone(it); c.id = uid();
     const s = SY.byId[c.type];
-    if (s.mount === 'wall') {
+    if (c.pts) { c.pts = c.pts.map(p => [p[0] + 40, p[1] + 40]); c.x += 40; c.y += 40; }
+    else if (s.mount === 'wall') {
       // δίπλα, πάνω στον ίδιο τοίχο
       const r = (c.rot || 0) * Math.PI / 180;
       c.x += Math.cos(r) * 36; c.y += Math.sin(r) * 36;
@@ -1267,6 +1356,7 @@
 
   // ----- παλέτα συμβόλων -----
   function pickSymbol(id) {
+    if (ST.draft && ST.draft.type === 'strip') finishStrip();
     ST.placing = id;
     ST.recent = [id, ...ST.recent.filter(x => x !== id)].slice(0, 10);
     try { localStorage.setItem('epc_recent', JSON.stringify(ST.recent)); } catch (e) { }
@@ -1315,7 +1405,7 @@
       Sheet.close();
       if (replaceId) {
         const it = item(replaceId);
-        if (it) { it.type = t.dataset.id; const s = SY.byId[it.type]; if (s.labelDefault && !it.label) it.label = nextPanelLabel(s); placeOnWall(it, RD.itemCenter(it)); commit(); draw(); updateCtx(); }
+        if (it) { it.type = t.dataset.id; if (it.type !== 'led_strip') delete it.pts; const s = SY.byId[it.type]; if (s.labelDefault && !it.label) it.label = nextPanelLabel(s); placeOnWall(it, RD.itemCenter(it)); commit(); draw(); updateCtx(); }
         return;
       }
       pickSymbol(t.dataset.id);
@@ -1405,7 +1495,7 @@
     };
     b.querySelectorAll('[data-c]').forEach(c => c.onclick = () => { b.querySelector('#ipCirc').value = c.dataset.c; b.querySelectorAll('[data-c]').forEach(x => x.classList.toggle('on', x === c)); });
     b.querySelectorAll('[data-h]').forEach(c => c.onclick = () => { b.querySelector('#ipH').value = c.dataset.h; b.querySelectorAll('[data-h]').forEach(x => x.classList.toggle('on', x === c)); });
-    b.querySelector('[data-a=rot]').onclick = () => { it.rot = ((it.rot || 0) + 90) % 360; commit(); draw(); };
+    b.querySelector('[data-a=rot]').onclick = () => rotateItem(it);
     b.querySelector('[data-a=swap]').onclick = () => { apply(); ST.replacing = it.id; Sheet.close(); setTimeout(symbolPalette, 260); };
     b.querySelector('[data-a=dup]').onclick = () => { Sheet.close(); duplicateItem(it); };
     b.querySelector('[data-a=del]').onclick = () => { Sheet.onClose = null; Sheet.close(); deleteItem(it); };

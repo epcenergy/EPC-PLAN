@@ -90,7 +90,7 @@
     });
     let ey = ly + 75 + perCol * rh + 20;
     if ((floor.links || []).length) {
-      s += `<line x1="${lx + 20}" y1="${ey + 18}" x2="${lx + 70}" y2="${ey + 18}" stroke="#0b5cad" stroke-width="3" stroke-dasharray="10 7"/>`;
+      s += `<line x1="${lx + 20}" y1="${ey + 18}" x2="${lx + 70}" y2="${ey + 18}" stroke="#e3001b" stroke-width="3" stroke-dasharray="10 7"/>`;
       s += text(lx + 85, ey + 26, 'Σύνδεση φωτιστικών / διακόπτη', 22, '#111');
       ey += 46;
     }
