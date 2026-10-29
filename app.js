@@ -7,7 +7,7 @@
   const esc = RD.esc;
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const clone = (o) => JSON.parse(JSON.stringify(o));
-  const APP_VERSION = '1.4.0';
+  const APP_VERSION = '1.5.0';
 
   // ---------- εικονίδια ----------
   const IC = {
@@ -215,9 +215,11 @@
   $('#homeMenuBtn').onclick = () => {
     const b = Sheet.open(`<h3>EPC PLAN</h3><div class="menu-list">
       <button class="menu-item" data-a="import">${IC.upload}<span class="grow">Επαναφορά από αντίγραφο ασφαλείας<small>Άνοιγμα αρχείου .epcplan.json</small></span></button>
+      <button class="menu-item" data-a="upd">${IC.download}<span class="grow">Ενημέρωση εφαρμογής<small>Φέρνει τη νεότερη έκδοση – τα έργα δεν σβήνονται</small></span></button>
       <button class="menu-item" data-a="about">${IC.info}<span class="grow">Πληροφορίες<small>Έκδοση ${APP_VERSION}</small></span></button>
     </div>`);
     b.querySelector('[data-a=import]').onclick = () => { Sheet.close(); $('#fileBackup').click(); };
+    b.querySelector('[data-a=upd]').onclick = () => { Sheet.close(); forceUpdate(); };
     b.querySelector('[data-a=about]').onclick = () => {
       Sheet.open(`<h3>EPC PLAN ${APP_VERSION}</h3><p class="note">Κατόψεις ηλεκτρολογικών εγκαταστάσεων από χειρόγραφο σκίτσο.<br>Τα έργα αποθηκεύονται μόνο σε αυτό το κινητό. Κράτα τακτικά αντίγραφο ασφαλείας από το μενού κάθε έργου.<br><br>Σύμβολα κατά τις συμβάσεις IEC 60617 / ΕΛΟΤ για σχέδια εγκαταστάσεων.</p>`);
     };
@@ -1603,11 +1605,14 @@
       <label class="switch-row"><input type="checkbox" id="pdCi" ${cur.view.circuits !== false ? 'checked' : ''}><span>Αριθμοί κυκλωμάτων στο σχέδιο</span></label>
       <label class="switch-row"><input type="checkbox" id="pdH" ${cur.view.heights !== false ? 'checked' : ''}><span>Ύψη στο σχέδιο</span></label>
       <label class="switch-row"><input type="checkbox" id="pdN" ${cur.view.notes !== false ? 'checked' : ''}><span>Σημειώσεις στο σχέδιο</span></label>
+      <h4>Υδατογράφημα (λογότυπο + EPC ENERGY)</h4>
+      <div class="chips" id="pdW">${[['none', 'Χωρίς'], ['light', 'Αχνό'], ['normal', 'Κανονικό'], ['strong', 'Έντονο']].map(([v, t]) => `<button class="chip ${(cur.view.wm || 'normal') === v ? 'on' : ''}" data-w="${v}">${t}</button>`).join('')}</div>
       <button class="btn primary" style="width:100%;margin-top:14px" data-a="go">Δημιουργία PDF</button>`);
+    b.querySelectorAll('[data-w]').forEach(c => c.onclick = () => { cur.view.wm = c.dataset.w; saveSoon(); b.querySelectorAll('[data-w]').forEach(x => x.classList.toggle('on', x === c)); });
     b.querySelector('[data-a=go]').onclick = async () => {
       const ids = [...b.querySelectorAll('[data-f]')].filter(c => c.checked).map(c => c.dataset.f);
       if (!ids.length) { toast('Διάλεξε τουλάχιστον μία κάτοψη'); return; }
-      const opts = { circuits: b.querySelector('#pdC').checked, showCircuits: b.querySelector('#pdCi').checked, showHeights: b.querySelector('#pdH').checked, showNotes: b.querySelector('#pdN').checked };
+      const opts = { circuits: b.querySelector('#pdC').checked, showCircuits: b.querySelector('#pdCi').checked, showHeights: b.querySelector('#pdH').checked, showNotes: b.querySelector('#pdN').checked, watermark: cur.view.wm || 'normal' };
       Sheet.close(); busy(true, 'Δημιουργία PDF…');
       try {
         await saveNow();
@@ -1997,8 +2002,29 @@
   ['gesturestart', 'gesturechange'].forEach(t => document.addEventListener(t, e => e.preventDefault(), { passive: false }));
   window.addEventListener('popstate', () => { });
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('sw.js').catch(() => { });
+    // όταν έρθει νέα έκδοση, η εφαρμογή ξαναφορτώνει μόνη της μία φορά
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloaded) return;
+      reloaded = true; saveNow(); setTimeout(() => location.reload(), 150);
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+      reg.update().catch(() => { });
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => { }); });
+    }).catch(() => { });
   }
+  // χειροκίνητη ενημέρωση: καθαρίζει μόνο τα αρχεία της εφαρμογής – ΤΑ ΕΡΓΑ ΔΕΝ ΣΒΗΝΟΝΤΑΙ
+  async function forceUpdate() {
+    busy(true, 'Ενημέρωση εφαρμογής…');
+    await saveNow();
+    try {
+      if ('serviceWorker' in navigator) { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); }
+      if (window.caches) { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }
+    } catch (e) { }
+    location.replace(location.pathname + '?u=' + Date.now());
+  }
+  $('.brand-text small').textContent = 'Κατόψεις ηλεκτρολογικών · v' + APP_VERSION;
   loadProjects();
 
   // για δοκιμές

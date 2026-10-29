@@ -185,7 +185,46 @@
     return out;
   }
 
-  function svgToCanvas(inner, scale = 1) {
+  // ----- υδατογράφημα: λογότυπο + «EPC ENERGY» σε όλη τη σελίδα, λοξά, πίσω από το σχέδιο -----
+  const WM_ALPHA = { light: 0.08, normal: 0.13, strong: 0.22 };
+  let logoMark = null;
+  function getLogoMark() {
+    // το εικονίδιο έχει μπλε φόντο: κρατάμε μόνο το πορτοκαλί σήμα (διαφανές φόντο)
+    if (logoMark || !logoImg) return logoMark;
+    const n = 256, c = document.createElement('canvas'); c.width = c.height = n;
+    const g = c.getContext('2d'); g.drawImage(logoImg, 0, 0, n, n);
+    const d = g.getImageData(0, 0, n, n), p = d.data;
+    for (let i = 0; i < p.length; i += 4) { const a = Math.max(0, Math.min(1, (p[i] - 30) / 200)); p[i] = 247; p[i + 1] = 169; p[i + 2] = 58; p[i + 3] = a * 255; }
+    g.putImageData(d, 0, 0);
+    logoMark = c;
+    return c;
+  }
+  function drawWatermark(g, scale, level) {
+    const a = WM_ALPHA[level];
+    const mark = getLogoMark();
+    if (!a || !mark) return;
+    const cw = W * scale, ch = H * scale;
+    const layer = document.createElement('canvas'); layer.width = cw; layer.height = ch;
+    const l = layer.getContext('2d');
+    const sz = W * 0.075 * scale, step = sz * 2.1, fs = sz * 0.22;
+    l.translate(cw / 2, ch / 2); l.rotate(-30 * Math.PI / 180);
+    l.font = `bold ${fs}px Arial, Helvetica, sans-serif`; l.textAlign = 'center'; l.textBaseline = 'top'; l.fillStyle = '#00468c';
+    const R = Math.hypot(cw, ch) / 2 + step;
+    let row = 0;
+    for (let y = -R; y < R; y += step, row++) {
+      const off = (row % 2) * step / 2;
+      for (let x = -R; x < R; x += step) {
+        l.drawImage(mark, x + off - sz / 2, y - sz / 2, sz, sz);
+        l.fillText('EPC ENERGY', x + off, y + sz / 2 + sz * 0.08);
+      }
+    }
+    // «darken»: φαίνεται μόνο πάνω στο ανοιχτό χαρτί – οι γραμμές και τα γράμματα μένουν καθαρά
+    g.save(); g.globalAlpha = a; g.globalCompositeOperation = 'darken';
+    g.drawImage(layer, 0, 0);
+    g.restore();
+  }
+
+  function svgToCanvas(inner, scale = 1, wm = 'none') {
     return new Promise((res, rej) => {
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${inner}</svg>`;
       const img = new Image();
@@ -195,6 +234,7 @@
         const g = c.getContext('2d');
         g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
         g.drawImage(img, 0, 0, c.width, c.height);
+        try { drawWatermark(g, scale, wm); } catch (e) { }
         if (logoImg) { try { g.drawImage(logoImg, 30 * scale, 20 * scale, 110 * scale, 110 * scale); } catch (e) { } }
         res(c);
       };
@@ -256,7 +296,7 @@
     const svgs = await pagesFor(project, floorIds, opts);
     const imgs = [];
     for (const s of svgs) {
-      const c = await svgToCanvas(s);
+      const c = await svgToCanvas(s, 1, opts.watermark || 'normal');
       imgs.push({ w: c.width, h: c.height, bytes: dataURLtoBytes(c.toDataURL('image/jpeg', 0.9)) });
     }
     return buildPDF(imgs);
@@ -265,7 +305,7 @@
   async function exportPNG(project, floor, opts) {
     R().setSymScale((project.view && project.view.symScale) || 1.3);
     const lg = await logo();
-    const c = await svgToCanvas(planPage(project, floor, opts, lg, 1, 1));
+    const c = await svgToCanvas(planPage(project, floor, opts, lg, 1, 1), 1, (project.view && project.view.wm) || 'normal');
     return new Promise(r => c.toBlob(r, 'image/png'));
   }
 
