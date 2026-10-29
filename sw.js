@@ -1,7 +1,7 @@
 /* EPC PLAN – λειτουργία χωρίς internet
    Με internet: παίρνει ΠΑΝΤΑ τη νεότερη έκδοση από το GitHub (χωρίς παλιά αντίγραφα).
    Χωρίς internet ή με πολύ αργό σήμα (>3,5 δευτ.): ανοίγει από τη μνήμη του κινητού. */
-const CACHE = 'epcplan-v1.6.0';
+const CACHE = 'epcplan-v1.7.0';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest', 'app.css',
   'symbols.js', 'render.js', 'db.js', 'export.js', 'detect.js', 'app.js',

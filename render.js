@@ -42,19 +42,19 @@
       return { x0, y0, x1, y1, w: x1 - x0, h: y1 - y0 };
     },
     // εσωτερικό σημείο για την ετικέτα (το πιο «βαθύ» σημείο του χώρου)
-    labelPoint(pts, avoid = []) {
-      const key = JSON.stringify(pts) + '|' + JSON.stringify(avoid);
+    labelPoint(pts, avoid = [], hw = 34, hh = 12) {
+      const key = JSON.stringify(pts) + '|' + JSON.stringify(avoid) + '|' + hw + '|' + hh;
       const c = G._lp || (G._lp = new Map());
       if (c.has(key)) return c.get(key);
       if (c.size > 300) c.clear();
-      const r = G._labelPoint(pts, avoid);
+      const r = G._labelPoint(pts, avoid, hw, hh);
       c.set(key, r);
       return r;
     },
-    _labelPoint(pts, avoid) {
+    _labelPoint(pts, avoid, hw = 34, hh = 12) {
       const b = G.bbox(pts);
       let best = [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2], bestD = -1;
-      const N = 18;
+      const N = 24;
       for (let i = 1; i < N; i++) for (let j = 1; j < N; j++) {
         const p = [b.x0 + (b.w * i) / N, b.y0 + (b.h * j) / N];
         if (!G.inside(p, pts)) continue;
@@ -64,7 +64,12 @@
         const cx = Math.hypot(p[0] - (b.x0 + b.x1) / 2, p[1] - (b.y0 + b.y1) / 2);
         let pen = 0;
         // η ετικέτα είναι φαρδιά: ελλειπτική ζώνη αποφυγής γύρω από τα σύμβολα
-        avoid.forEach(a => { const da = Math.hypot((a[0] - p[0]) / 2.2, a[1] - p[1]); if (da < 34) pen += (34 - da) * 3; });
+        // το κείμενο πιάνει ένα ορθογώνιο hw×hh γύρω από το σημείο: ό,τι πέφτει μέσα του τιμωρείται βαριά
+        avoid.forEach(a => {
+          const dx = Math.abs(a[0] - p[0]), dy = Math.abs(a[1] - p[1]);
+          if (dx < hw + 6 && dy < hh + 6) pen += 400 + (hw + 6 - dx) + (hh + 6 - dy);
+          else { const da = Math.hypot(Math.max(0, dx - hw) / 1.5, Math.max(0, dy - hh)); if (da < 20) pen += (20 - da) * 1.5; }
+        });
         const score = d - cx * 0.05 - pen;
         if (score > bestD) { bestD = score; best = p; }
       }
@@ -232,7 +237,29 @@
   const LINK = '#e3001b';
   // καμπύλη (τόξο) της γραμμής σύνδεσης
   const linkBend = (len) => Math.min(140, len * 0.28);
-  const LAYERS = ['fill', 'wall', 'open', 'label', 'link', 'item'];
+  const LAYERS = ['fill', 'furn', 'wall', 'open', 'label', 'link', 'item'];
+  // κρεβάτι σε πραγματικές διαστάσεις σχεδίου (περίπου εκατοστά)
+  function bedSVG(it) {
+    const w = it.w || 160, h = it.h || 200, x0 = -w / 2, y0 = -h / 2;
+    const hb = Math.min(12, h * 0.06), pw = w >= 120 ? (w - 30) / 2 : w - 20, ph = Math.min(32, h * 0.15);
+    let s = `<rect x="${f(x0)}" y="${f(y0)}" width="${f(w)}" height="${f(h)}" rx="5" fill="#fff" stroke="#555" stroke-width="2"/>`;
+    s += `<rect x="${f(x0)}" y="${f(y0)}" width="${f(w)}" height="${f(hb)}" rx="3" fill="#777"/>`;
+    const py = y0 + hb + 6;
+    if (w >= 120) {
+      s += `<rect x="${f(x0 + 10)}" y="${f(py)}" width="${f(pw)}" height="${f(ph)}" rx="7" fill="#fff" stroke="#777" stroke-width="1.6"/>`;
+      s += `<rect x="${f(x0 + 20 + pw)}" y="${f(py)}" width="${f(pw)}" height="${f(ph)}" rx="7" fill="#fff" stroke="#777" stroke-width="1.6"/>`;
+    } else s += `<rect x="${f(x0 + 10)}" y="${f(py)}" width="${f(pw)}" height="${f(ph)}" rx="7" fill="#fff" stroke="#777" stroke-width="1.6"/>`;
+    const fy = py + ph + 14;
+    s += `<path d="M ${f(x0)} ${f(fy)} L ${f(x0 + w)} ${f(fy)}" stroke="#777" stroke-width="1.6"/>`;
+    s += `<path d="M ${f(x0 + w)} ${f(fy + 18)} L ${f(x0 + w - 22)} ${f(fy)}" stroke="#999" stroke-width="1.2" fill="none"/>`;
+    return `<g transform="translate(${f(it.x)},${f(it.y)}) rotate(${f(it.rot || 0)})">${s}</g>`;
+  }
+  function wallPolySVG(wl, sel, sc) {
+    const pp = wl.pts.map(p => f(p[0]) + ',' + f(p[1])).join(' ');
+    let s = `<polyline points="${pp}" fill="none" stroke="#222" stroke-width="${WALL}" stroke-linejoin="miter" stroke-linecap="square"/>`;
+    if (sel) s += `<polyline points="${pp}" fill="none" stroke="${ACCENT}" stroke-width="${f(3 / sc)}" stroke-dasharray="${f(8 / sc)} ${f(5 / sc)}"/>`;
+    return s;
+  }
   /**
    * Τα κομμάτια της κάτοψης ανά στρώση, το καθένα με κλειδί, ώστε η οθόνη να ξανασχεδιάζει μόνο ό,τι άλλαξε.
    * opts: { scale, sel:{kind,id}, linkFrom, showCircuits, showHeights, showNotes, exportMode }
@@ -240,7 +267,8 @@
   function floorParts(floor, opts = {}) {
     const sc = opts.scale || 1;
     const sel = opts.sel || {};
-    const P = { fill: [], wall: [], open: [], label: [], link: [], item: [] };
+    const P = { fill: [], furn: [], wall: [], open: [], label: [], link: [], item: [] };
+    (floor.walls || []).forEach(wl => P.wall.push(['fw' + wl.id, wallPolySVG(wl, sel.kind === 'fwall' && sel.id === wl.id, sc)]));
     const centers = floor.items.map(itemCenter);
     floor.rooms.forEach(r => {
       const isSel = sel.kind === 'room' && sel.id === r.id;
@@ -248,11 +276,29 @@
       P.fill.push([r.id, `<path d="${d}" fill="${isSel ? 'rgba(0,70,140,0.10)' : (opts.exportMode ? '#fff' : 'rgba(255,255,255,0.78)')}" stroke="none"/>`]);
       P.wall.push([r.id, `<path d="${d}" fill="none" stroke="#222" stroke-width="${WALL}" stroke-linejoin="miter"/>`]);
       const avoid = centers.filter(c => G.inside(c, r.pts));
-      const p = G.labelPoint(r.pts, avoid);
+      // και τους ελεύθερους τοίχους
+      (floor.walls || []).forEach(wl => {
+        for (let i = 1; i < wl.pts.length; i++) {
+          const A = wl.pts[i - 1], B = wl.pts[i], n = Math.max(1, Math.round(Math.hypot(B[0] - A[0], B[1] - A[1]) / 25));
+          for (let k = 0; k <= n; k++) { const q = [A[0] + (B[0] - A[0]) * k / n, A[1] + (B[1] - A[1]) * k / n]; if (G.inside(q, r.pts)) avoid.push(q); }
+        }
+      });
+      // τα έπιπλα πιάνουν χώρο: το όνομα του χώρου τα αποφεύγει σε όλη την επιφάνειά τους
+      floor.items.forEach(it => {
+        if (!(it.w && it.h)) return;
+        const rr = (it.rot || 0) * Math.PI / 180, cs = Math.cos(rr), sn = Math.sin(rr);
+        const nx = Math.max(2, Math.ceil(it.w / 12)), ny = Math.max(2, Math.ceil(it.h / 12));
+        for (let i = 0; i <= nx; i++) for (let j = 0; j <= ny; j++) {
+          const lx = (i / nx - 0.5) * it.w, ly = (j / ny - 0.5) * it.h;
+          const q = [it.x + lx * cs - ly * sn, it.y + lx * sn + ly * cs];
+          if (G.inside(q, r.pts)) avoid.push(q);
+        }
+      });
       const b = G.bbox(r.pts);
       // το όνομα χωράει πάντα μέσα στον χώρο (δεν βγαίνει στον διπλανό)
       const len = Math.max(1, (r.name || '').length);
       const size = Math.max(5, Math.min(20, Math.min(b.w, b.h) / 6, (b.w * 0.88) / (0.62 * len)));
+      const p = G.labelPoint(r.pts, avoid, size * 0.31 * len, size * 0.6);
       P.label.push([r.id, `<text x="${f(p[0])}" y="${f(p[1])}" font-size="${f(size)}" font-family="Arial,Helvetica,sans-serif" font-weight="800" fill="${BLUE}" fill-opacity="0.85" text-anchor="middle" dominant-baseline="central">${esc(r.name || '')}</text>`]);
     });
     (floor.openings || []).forEach(o => {
@@ -277,6 +323,16 @@
       P.link.push([l.id, `<path d="M ${f(ax)} ${f(ay)} Q ${f(qx)} ${f(qy)} ${f(bx)} ${f(by)}" fill="none" stroke="${isSel ? ACCENT : LINK}" stroke-width="${isSel ? 3 : 1.9}" stroke-dasharray="7 5" stroke-linecap="round"/>`]);
     });
     floor.items.forEach((it, idx) => {
+      const sy = SY().byId[it.type];
+      if (sy && sy.kind === 'furniture') {
+        let s = bedSVG(it);
+        if (sel.kind === 'item' && sel.id === it.id) {
+          const w = it.w || 160, h = it.h || 200;
+          s += `<g transform="translate(${f(it.x)},${f(it.y)}) rotate(${f(it.rot || 0)})"><rect x="${f(-w / 2 - 4)}" y="${f(-h / 2 - 4)}" width="${f(w + 8)}" height="${f(h + 8)}" fill="none" stroke="${ACCENT}" stroke-width="${f(2.5 / sc)}" stroke-dasharray="${f(8 / sc)} ${f(5 / sc)}"/></g>`;
+        }
+        P.furn.push([it.id, s]);
+        return;
+      }
       let s = itemSVG(it, opts);
       const isSel = sel.kind === 'item' && sel.id === it.id;
       const isFrom = opts.linkFrom === it.id;
@@ -297,8 +353,10 @@
   function floorBounds(floor) {
     const pts = [];
     floor.rooms.forEach(r => r.pts.forEach(p => pts.push(p)));
+    (floor.walls || []).forEach(wl => wl.pts.forEach(p => pts.push(p)));
     floor.items.forEach(i => {
       if (i.pts) i.pts.forEach(p => pts.push(p));
+      if (i.w && i.h) { const r = Math.hypot(i.w, i.h) / 2; pts.push([i.x - r, i.y - r]); pts.push([i.x + r, i.y + r]); }
       pts.push([i.x - 22 * SK, i.y - 30 * SK]); pts.push([i.x + 30 * SK, i.y + 22 * SK]);
     });
     (floor.openings || []).forEach(o => { pts.push([o.x - o.w, o.y - o.w]); pts.push([o.x + o.w, o.y + o.w]); });
@@ -306,5 +364,5 @@
     return G.bbox(pts);
   }
 
-  window.EPC_RENDER = { roomOf, linkBend, LINK, polyMid, floorParts, LAYERS, setSymScale, get SK() { return SK; }, G, floorSVG, floorBounds, itemCenter, roomPathD, esc, BLUE, ACCENT, WALL };
+  window.EPC_RENDER = { bedSVG, roomOf, linkBend, LINK, polyMid, floorParts, LAYERS, setSymScale, get SK() { return SK; }, G, floorSVG, floorBounds, itemCenter, roomPathD, esc, BLUE, ACCENT, WALL };
 })();

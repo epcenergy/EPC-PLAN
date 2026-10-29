@@ -45,7 +45,7 @@
 
   function legendRows(floor) {
     const counts = {};
-    floor.items.forEach(i => (counts[i.type] = (counts[i.type] || 0) + 1));
+    floor.items.forEach(i => { const sy = SY().byId[i.type]; if (sy && sy.kind !== 'furniture') counts[i.type] = (counts[i.type] || 0) + 1; });
     const order = SY().list.map(s => s.id);
     return Object.keys(counts).sort((a, b) => order.indexOf(a) - order.indexOf(b)).map(id => ({ id, n: counts[id] }));
   }
@@ -114,7 +114,7 @@
       const rooms = fl.rooms || [];
       fl.items.forEach(it => {
         const sym = SY().byId[it.type];
-        if (!sym || sym.kind === 'panel') return;
+        if (!sym || sym.kind === 'panel' || sym.kind === 'furniture') return;
         const code = (it.circuit || '').trim() || '—';
         const m = map[code] || (map[code] = { code, types: {}, rooms: new Set(), n: 0 });
         m.n++;

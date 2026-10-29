@@ -7,7 +7,7 @@
   const esc = RD.esc;
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const clone = (o) => JSON.parse(JSON.stringify(o));
-  const APP_VERSION = '1.6.0';
+  const APP_VERSION = '1.7.0';
 
   // ---------- εικονίδια ----------
   const IC = {
@@ -21,6 +21,7 @@
     undo: '<svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 010 10h-3"/></svg>',
     rect: '<svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14"/></svg>',
     poly: '<svg viewBox="0 0 24 24"><path d="M4 4h10v6h6v10H4z"/></svg>',
+    wall: '<svg viewBox="0 0 24 24"><path d="M3 18L21 6" stroke-width="4"/></svg>',
     square: '<svg viewBox="0 0 24 24"><path d="M4 20V4h16"/><path d="M8 20v-4h4"/></svg>',
     split: '<svg viewBox="0 0 24 24"><path d="M3 12h7M14 12h7"/><circle cx="12" cy="12" r="2"/><path d="M12 4v4M12 16v4"/></svg>',
     flip: '<svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M8 7L3 12l5 5M16 7l5 5-5 5"/></svg>',
@@ -141,7 +142,7 @@
   let saveT = 0;
 
   function newFloor(name) {
-    return { id: uid(), name, rooms: [], items: [], links: [], openings: [], photo: null, created: Date.now() };
+    return { id: uid(), name, rooms: [], items: [], links: [], openings: [], walls: [], photo: null, created: Date.now() };
   }
   function newProject() {
     return {
@@ -367,7 +368,7 @@
 
   function openEditor(fl) {
     floor = fl;
-    floor.links = floor.links || []; floor.openings = floor.openings || [];
+    floor.links = floor.links || []; floor.openings = floor.openings || []; floor.walls = floor.walls || [];
     $('#edTitle').textContent = fl.name;
     ST.sel = {}; ST.linkFrom = null; ST.draft = null; ST.placing = null;
     ST.hist = [snapshot()]; ST.hi = 0;
@@ -392,7 +393,7 @@
   };
 
   // ----- ιστορικό -----
-  function snapshot() { return JSON.stringify({ rooms: floor.rooms, items: floor.items, links: floor.links, openings: floor.openings }); }
+  function snapshot() { return JSON.stringify({ rooms: floor.rooms, items: floor.items, links: floor.links, openings: floor.openings, walls: floor.walls }); }
   function commit() {
     ST.hist = ST.hist.slice(0, ST.hi + 1);
     ST.hist.push(snapshot());
@@ -402,13 +403,13 @@
   }
   function restore(s) {
     const o = JSON.parse(s);
-    floor.rooms = o.rooms; floor.items = o.items; floor.links = o.links; floor.openings = o.openings;
+    floor.rooms = o.rooms; floor.items = o.items; floor.links = o.links; floor.openings = o.openings; floor.walls = o.walls || [];
     ST.sel = {}; ST.linkFrom = null;
     saveSoon(); updateUndo(); updateCtx(); draw(); updateEmpty();
   }
   function updateUndo() { $('#undoBtn').disabled = ST.hi <= 0; $('#redoBtn').disabled = ST.hi >= ST.hist.length - 1; }
   $('#undoBtn').onclick = () => {
-    if (ST.draft && ST.draft.type === 'strip') { ST.draft.pts.pop(); if (!ST.draft.pts.length) ST.draft = null; updateCtx(); draw(); return; }
+    if (ST.draft && (ST.draft.type === 'strip' || ST.draft.type === 'wall')) { ST.draft.pts.pop(); if (!ST.draft.pts.length) ST.draft = null; updateCtx(); draw(); return; }
     if (ST.draft) { finishDraft(false); return; } if (ST.hi > 0) { ST.hi--; restore(ST.hist[ST.hi]); toast('Αναίρεση', 900); } };
   $('#redoBtn').onclick = () => { if (ST.hi < ST.hist.length - 1) { ST.hi++; restore(ST.hist[ST.hi]); } };
 
@@ -567,9 +568,18 @@
       o += `<polyline points="${pts.map(p => p.join(',')).join(' ')}" fill="none" stroke="#111" stroke-width="${2.5 / s}" stroke-dasharray="${7 / s} ${4 / s}"/>`;
       d.pts.forEach((p, i) => (o += `<circle cx="${p[0]}" cy="${p[1]}" r="${(i === d.pts.length - 1 ? 11 : 7) / s}" fill="${i === d.pts.length - 1 ? '#27ae60' : '#fff'}" stroke="#111" stroke-width="${2.5 / s}"/>`));
     }
+    if (d && d.type === 'wall' && d.pts.length) {
+      o += `<polyline points="${d.pts.map(p => p.join(',')).join(' ')}" fill="none" stroke="#222" stroke-width="${Math.max(RD.WALL, 4 / s)}" stroke-linecap="square"/>`;
+      d.pts.forEach((p, i) => (o += `<circle cx="${p[0]}" cy="${p[1]}" r="${(i === d.pts.length - 1 ? 11 : 7) / s}" fill="${i === d.pts.length - 1 ? '#27ae60' : '#fff'}" stroke="${RD.BLUE}" stroke-width="${2.5 / s}"/>`));
+    }
     if (ST.sel.kind === 'item' && ST.mode === 'select') {
       const it = item(ST.sel.id);
       if (it && it.pts) it.pts.forEach(p => (o += `<circle cx="${p[0]}" cy="${p[1]}" r="${hr}" fill="#fff" stroke="${RD.ACCENT}" stroke-width="${3.5 / s}"/>`));
+      if (it && isFurn(it)) { const q = bedCorner(it); o += `<rect x="${q[0] - hr}" y="${q[1] - hr}" width="${hr * 2}" height="${hr * 2}" rx="${4 / s}" fill="#fff" stroke="${RD.ACCENT}" stroke-width="${3.5 / s}"/><path d="M ${q[0] - hr * 0.45} ${q[1] + hr * 0.45} L ${q[0] + hr * 0.45} ${q[1] - hr * 0.45}" stroke="${RD.ACCENT}" stroke-width="${2.5 / s}"/>`; }
+    }
+    if (ST.sel.kind === 'fwall' && ST.mode === 'select') {
+      const wl = fwall(ST.sel.id);
+      if (wl) wl.pts.forEach(p => (o += `<circle cx="${p[0]}" cy="${p[1]}" r="${hr}" fill="#fff" stroke="${RD.ACCENT}" stroke-width="${3.5 / s}"/>`));
     }
     if (ST.guides) ST.guides.forEach(g => {
       if (g.x != null) o += `<line x1="${g.x}" y1="-100000" x2="${g.x}" y2="100000" stroke="#e74c3c" stroke-width="${1 / s}" stroke-dasharray="${5 / s} ${4 / s}"/>`;
@@ -581,6 +591,7 @@
   const room = (id) => floor.rooms.find(r => r.id === id);
   const item = (id) => floor.items.find(i => i.id === id);
   const opening = (id) => floor.openings.find(o => o.id === id);
+  const fwall = (id) => (floor.walls || []).find(w => w.id === id);
 
   // ----- κούμπωμα (snap) -----
   const GRID = 10;
@@ -618,7 +629,20 @@
           const ex = b[0] - a[0], ey = b[1] - a[1], len = Math.hypot(ex, ey) || 1;
           let nx = -ey / len, ny = ex / len;
           if (!G.inside([sd.x + nx * 3, sd.y + ny * 3], r.pts)) { nx = -nx; ny = -ny; }
-          best = { score: d, x: sd.x, y: sd.y, nx, ny, ang: Math.atan2(ey, ex) * 180 / Math.PI, room: r, i, t: sd.t, len };
+          best = { score: d, x: sd.x, y: sd.y, nx, ny, ang: Math.atan2(ey, ex) * 180 / Math.PI, room: r, i, t: sd.t, len, a, b };
+        }
+      }
+    });
+    // ελεύθεροι τοίχοι (σκέτες γραμμές): το σύμβολο μπαίνει από την πλευρά που πάτησες
+    (floor.walls || []).forEach(wl => {
+      for (let i = 1; i < wl.pts.length; i++) {
+        const a = wl.pts[i - 1], b = wl.pts[i];
+        const sd = G.segDist(p, a, b);
+        if (sd.d < maxD && (!best || sd.d < best.score)) {
+          const ex = b[0] - a[0], ey = b[1] - a[1], len = Math.hypot(ex, ey) || 1;
+          let nx = -ey / len, ny = ex / len;
+          if ((p[0] - sd.x) * nx + (p[1] - sd.y) * ny < 0) { nx = -nx; ny = -ny; }
+          best = { score: sd.d, x: sd.x, y: sd.y, nx, ny, ang: Math.atan2(ey, ex) * 180 / Math.PI, room: null, i, t: sd.t, len, a, b };
         }
       }
     });
@@ -631,7 +655,8 @@
       if (w) {
         it.x = w.x; it.y = w.y;
         it.rot = Math.round(Math.atan2(w.nx, -w.ny) * 180 / Math.PI);
-        it.room = w.room.id; // ο χώρος του τοίχου που διαλέχτηκε (σημαντικό σε κοινούς τοίχους)
+        if (w.room) it.room = w.room.id; // ο χώρος του τοίχου που διαλέχτηκε (σημαντικό σε κοινούς τοίχους)
+        else { delete it.room; const rr = RD.roomOf(floor, it); if (rr) it.room = rr.id; }
         return true;
       }
     }
@@ -646,7 +671,7 @@
     if (!w) return false;
     // κράτα το κούφωμα μέσα στα όρια του τοίχου
     const half = Math.min(o.w / 2, w.len / 2);
-    const a = w.room.pts[w.i], b = w.room.pts[(w.i + 1) % w.room.pts.length];
+    const a = w.a, b = w.b;
     let t = w.t * w.len;
     t = Math.max(half, Math.min(w.len - half, t));
     t = snapG(t, 5);
@@ -678,6 +703,16 @@
   function hitTest(p, opts = {}) {
     const s = ST.view.s;
     const hr = Math.max(8, 24 / s);
+    // λαβή μεγέθους κρεβατιού
+    if (!opts.noHandles && ST.sel.kind === 'item') {
+      const it = item(ST.sel.id);
+      if (it && isFurn(it)) { const q = bedCorner(it); if (Math.hypot(q[0] - p[0], q[1] - p[1]) < hr * 1.3) return { kind: 'bedsz', id: it.id }; }
+    }
+    // λαβές επιλεγμένου ελεύθερου τοίχου
+    if (!opts.noHandles && ST.sel.kind === 'fwall') {
+      const wl = fwall(ST.sel.id);
+      if (wl) { let bi = -1, bd = hr; wl.pts.forEach((q, i) => { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < bd) { bd = d; bi = i; } }); if (bi >= 0) return { kind: 'fwpt', id: wl.id, i: bi }; }
+    }
     // λαβές επιλεγμένης ταινίας LED
     if (!opts.noHandles && ST.sel.kind === 'item') {
       const it = item(ST.sel.id);
@@ -707,7 +742,12 @@
     let best = null, bd = Math.max(14 * RD.SK, 26 / s);
     floor.items.forEach(it => {
       let d;
-      if (it.pts && it.pts.length >= 2) {
+      if (isFurn(it)) {
+        // τα έπιπλα πιάνονται πατώντας μέσα τους, αλλά τα σύμβολα πάνω τους έχουν προτεραιότητα
+        const [lx, ly] = toLocal(it, p);
+        if (Math.abs(lx) > (it.w || 160) / 2 || Math.abs(ly) > (it.h || 200) / 2) return;
+        d = Math.max(14 * RD.SK, 26 / s) * 0.95;
+      } else if (it.pts && it.pts.length >= 2) {
         d = Infinity;
         for (let i = 1; i < it.pts.length; i++) d = Math.min(d, G.segDist(p, it.pts[i - 1], it.pts[i]).d);
         d = d * 1.2 + 4; // οι ταινίες είναι μακριές: προτεραιότητα στα σημειακά σύμβολα
@@ -732,6 +772,11 @@
       const pts = linkPath(l);
       if (!pts) continue;
       for (let i = 0; i < pts.length - 1; i++) if (G.segDist(p, pts[i], pts[i + 1]).d < lt) return { kind: 'link', id: l.id };
+    }
+    // ελεύθεροι τοίχοι
+    const wt = Math.max(8, 16 / s);
+    for (const wl of (floor.walls || [])) {
+      for (let i = 1; i < wl.pts.length; i++) if (G.segDist(p, wl.pts[i - 1], wl.pts[i]).d < wt) return { kind: 'fwall', id: wl.id };
     }
     // χώροι (ο μικρότερος που περιέχει το σημείο)
     let rb = null, ra = Infinity;
@@ -832,6 +877,12 @@
       const h = hitTest(wp);
       if (h && h.kind === 'spt') {
         a.kind = 'spt'; a.id = h.id; a.i = h.i; a.hit = h;
+      } else if (h && h.kind === 'fwpt') {
+        a.kind = 'fwpt'; a.id = h.id; a.i = h.i; a.hit = h;
+      } else if (h && h.kind === 'bedsz') {
+        a.kind = 'bedsz'; a.id = h.id; a.hit = h;
+      } else if (h && h.kind === 'fwall' && ST.sel.kind === 'fwall' && ST.sel.id === h.id) {
+        a.kind = 'fwallmove'; a.id = h.id; a.hit = h; a.orig = clone(fwall(h.id).pts);
       } else if (h && (h.kind === 'vertex' || h.kind === 'edge')) {
         const r = room(h.id);
         a.kind = h.kind; a.room = r; a.i = h.i; a.orig = clone(r.pts);
@@ -872,6 +923,30 @@
         ST.draft.b = snapPoint(wp);
         break;
       case 'vertex': dragVertex(a, wp); a.dirty = true; break;
+      case 'fwpt': {
+        const wl = fwall(a.id), i = a.i;
+        let p = snapPoint(wp);
+        const tol = 12 / ST.view.s;
+        [wl.pts[i - 1], wl.pts[i + 1]].forEach(q => { if (!q) return; if (Math.abs(p[0] - q[0]) < tol) p[0] = q[0]; if (Math.abs(p[1] - q[1]) < tol) p[1] = q[1]; });
+        wl.pts[i] = p; a.dirty = true; break;
+      }
+      case 'fwallmove': {
+        const wl = fwall(a.id), dx = snapG(dW[0]), dy = snapG(dW[1]);
+        wl.pts = a.orig.map(p => [p[0] + dx, p[1] + dy]); a.dirty = true; break;
+      }
+      case 'bedsz': {
+        const it = item(a.id);
+        // η απέναντι γωνία μένει σταθερή, το κρεβάτι μεγαλώνει προς το δάχτυλο
+        const r = (it.rot || 0) * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+        const w0 = it.w || 160, h0 = it.h || 200;
+        const ax = it.x - (w0 / 2) * cs + (h0 / 2) * sn, ay = it.y - (w0 / 2) * sn - (h0 / 2) * cs; // πάνω-αριστερή γωνία
+        const dx = wp[0] - ax, dy = wp[1] - ay;
+        const lw = Math.max(60, Math.min(400, snapG(dx * cs + dy * sn, 5))), lh = Math.max(80, Math.min(400, snapG(-dx * sn + dy * cs, 5)));
+        it.w = lw; it.h = lh;
+        it.x = ax + (lw / 2) * cs - (lh / 2) * sn; it.y = ay + (lw / 2) * sn + (lh / 2) * cs;
+        ST.lastSize = ST.lastSize || {}; ST.lastSize[it.type] = { w: lw, h: lh };
+        a.dirty = true; break;
+      }
       case 'spt': {
         const it = item(a.id), i = a.i;
         let p = snapPoint(wp);
@@ -938,13 +1013,16 @@
     if (ST.splitting) { doSplit(wp); return; }
     if (m === 'select') {
       const h = a.hit !== undefined ? a.hit : hitTest(wp);
-      const hh = (h && (h.kind === 'vertex' || h.kind === 'edge')) ? null : h;
-      if (h && (h.kind === 'vertex' || h.kind === 'edge')) return; // λαβή – τίποτα
+      const HANDLES = ['vertex', 'edge', 'spt', 'fwpt', 'bedsz'];
+      const hh = (h && HANDLES.includes(h.kind)) ? null : h;
+      if (h && HANDLES.includes(h.kind)) return; // λαβή – τίποτα
       const now = Date.now();
       if (hh && lastTap.id === hh.id && now - lastTap.t < 380) { openProps(); lastTap = { t: 0 }; return; }
       lastTap = { t: now, id: hh && hh.id };
       ST.sel = hh ? { kind: hh.kind, id: hh.id } : {};
       updateCtx();
+    } else if (m === 'room' && ST.roomTool === 'wall') {
+      wallTap(wp);
     } else if (m === 'room' && ST.roomTool === 'poly') {
       polyTap(wp);
     } else if (m === 'symbol') {
@@ -1066,8 +1144,32 @@
     } else if (d && d.type === 'strip' && d.pts.length) toast('Η ταινία θέλει τουλάχιστον 2 σημεία');
     updateCtx(); draw();
   }
+  // ----- ελεύθερος τοίχος (σκέτη γραμμή, όχι κουτί) -----
+  function wallTap(wp) {
+    if (!ST.draft || ST.draft.type !== 'wall') { ST.draft = { type: 'wall', pts: [], ortho: !ST.freeDraw }; hint('Πάτα την αρχή και το τέλος του τοίχου. Για τοίχο με γωνίες, πάτα κι άλλα σημεία', 4000); }
+    const d = ST.draft, last = d.pts[d.pts.length - 1];
+    if (last && d.pts.length >= 2 && Math.hypot(wp[0] - last[0], wp[1] - last[1]) < 22 / ST.view.s) { finishWall(); return; }
+    let p = snapPoint(wp);
+    if (last && d.ortho) { if (Math.abs(p[0] - last[0]) > Math.abs(p[1] - last[1])) p[1] = last[1]; else p[0] = last[0]; }
+    ST.guides = null;
+    if (last && Math.hypot(p[0] - last[0], p[1] - last[1]) < 5) return;
+    d.pts.push(p);
+    $('#emptyHelp').classList.remove('show');
+    updateCtx(); draw();
+  }
+  function finishWall() {
+    const d = ST.draft;
+    ST.draft = null;
+    if (d && d.type === 'wall' && d.pts.length >= 2) {
+      floor.walls.push({ id: uid(), pts: d.pts });
+      commit();
+      if (navigator.vibrate) navigator.vibrate(15);
+    } else if (d && d.type === 'wall' && d.pts.length) toast('Ο τοίχος θέλει αρχή και τέλος');
+    updateCtx(); draw(); updateEmpty();
+  }
   function finishDraft(close) {
     if (ST.draft && ST.draft.type === 'strip') { finishStrip(); return; }
+    if (ST.draft && ST.draft.type === 'wall') { finishWall(); return; }
     const d = ST.draft;
     ST.draft = null;
     if (close && d && d.type === 'poly' && d.pts.length >= 3) {
@@ -1115,12 +1217,24 @@
     if (!isNew) setTimeout(() => inp.select(), 250);
   }
 
+  const isFurn = (it) => SY.byId[it.type] && SY.byId[it.type].kind === 'furniture';
+  // γωνία αλλαγής μεγέθους (κάτω δεξιά, στις συντεταγμένες του σχεδίου)
+  function bedCorner(it) {
+    const w = it.w || 160, h = it.h || 200, r = (it.rot || 0) * Math.PI / 180;
+    const lx = w / 2, ly = h / 2;
+    return [it.x + lx * Math.cos(r) - ly * Math.sin(r), it.y + lx * Math.sin(r) + ly * Math.cos(r)];
+  }
+  function toLocal(it, p) {
+    const r = -(it.rot || 0) * Math.PI / 180, dx = p[0] - it.x, dy = p[1] - it.y;
+    return [dx * Math.cos(r) - dy * Math.sin(r), dx * Math.sin(r) + dy * Math.cos(r)];
+  }
   const BASIC = ['sw1', 'sw2', 'sw_ar', 'sock', 'sock2', 'sock_wp', 'lamp', 'wall_lamp', 'spot', 'led_strip'];
   function makeItem(type) {
     const it = { id: uid(), type, x: 0, y: 0, rot: 0, circuit: '', height: '', note: '' };
     const s = SY.byId[type];
     if (s.labelDefault) it.label = nextPanelLabel(s);
     if (ST.lastCircuit && ST.lastCircuit[type]) it.circuit = ST.lastCircuit[type];
+    if (s.size) { const last = ST.lastSize && ST.lastSize[type]; it.w = last ? last.w : s.size.w; it.h = last ? last.h : s.size.h; }
     return it;
   }
 
@@ -1129,6 +1243,7 @@
     const h = hitTest(wp, { itemsOnly: true, noHandles: true });
     if (!h) { ST.linkFrom = null; updateCtx(); draw(); return; }
     const it = item(h.id);
+    if (isFurn(it)) { toast('Τα έπιπλα δεν συνδέονται'); return; }
     if (!ST.linkFrom) { ST.linkFrom = it.id; updateCtx(); draw(); return; }
     if (ST.linkFrom === it.id) { ST.linkFrom = null; updateCtx(); draw(); return; }
     const a = item(ST.linkFrom), b = it;
@@ -1151,6 +1266,7 @@
   // ================= ΛΕΙΤΟΥΡΓΙΕΣ / ΜΠΑΡΕΣ =================
   function setMode(m) {
     if (ST.draft && ST.draft.type === 'strip') finishStrip();
+    if (ST.draft && ST.draft.type === 'wall') finishWall();
     if (ST.draft && m !== 'room') finishDraft(false);
     ST.mode = m;
     if (m !== 'link') ST.linkFrom = null;
@@ -1158,7 +1274,7 @@
     $$('#modebar button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
     updateCtx(); draw();
     const hints = {
-      room: ST.roomTool === 'rect' ? 'Σύρε διαγώνια για ορθογώνιο χώρο' : 'Πάτα τις γωνίες του χώρου με τη σειρά',
+      room: ST.roomTool === 'rect' ? 'Σύρε διαγώνια για ορθογώνιο χώρο' : ST.roomTool === 'wall' ? 'Τοίχος: πάτα αρχή και τέλος (ξανά στο τέλος για ολοκλήρωση)' : 'Πάτα τις γωνίες του χώρου με τη σειρά',
       symbol: ST.placing ? 'Πάτα όπου θες να μπει: ' + SY.byId[ST.placing].name : 'Διάλεξε σύμβολο από την κάτω μπάρα',
       link: 'Διακόπτης → φωτιστικά, ή φωτιστικά σε σειρά → διακόπτης',
       opening: 'Πάτα πάνω σε τοίχο για να μπει το κούφωμα',
@@ -1189,9 +1305,12 @@
       if (d && d.type === 'poly' && d.pts.length) {
         h = chip(IC.undo + 'Σημείο', 'polyundo') + chip(IC.check + 'Κλείσιμο', 'polyclose', d.pts.length >= 3 ? 'ok' : '') + chip(IC.x + 'Ακύρωση', 'polycancel', 'warn') +
           `<span class="ctx-text">${d.pts.length} γωνίες</span>`;
+      } else if (d && d.type === 'wall' && d.pts.length) {
+        h = chip(IC.undo + 'Σημείο', 'polyundo') + chip(IC.check + 'Τέλος', 'walldone', d.pts.length >= 2 ? 'ok' : '') + chip(IC.x + 'Ακύρωση', 'wallcancel', 'warn') +
+          chip(IC.square + (ST.freeDraw ? 'Ελεύθερο' : '90°'), 'freedraw', ST.freeDraw ? '' : 'on') + `<span class="ctx-text">Τοίχος · ${d.pts.length} σημεία</span>`;
       } else {
-        h = chip(IC.rect + 'Ορθογώνιο', 'tool-rect', ST.roomTool === 'rect' ? 'on' : '') + chip(IC.poly + 'Γωνία-γωνία', 'tool-poly', ST.roomTool === 'poly' ? 'on' : '');
-        if (ST.roomTool === 'poly') h += chip(IC.square + (ST.freeDraw ? 'Ελεύθερο' : '90°'), 'freedraw', ST.freeDraw ? '' : 'on');
+        h = chip(IC.rect + 'Ορθογώνιο', 'tool-rect', ST.roomTool === 'rect' ? 'on' : '') + chip(IC.poly + 'Γωνία-γωνία', 'tool-poly', ST.roomTool === 'poly' ? 'on' : '') + chip(IC.wall + 'Τοίχος', 'tool-wall', ST.roomTool === 'wall' ? 'on' : '');
+        if (ST.roomTool === 'poly' || ST.roomTool === 'wall') h += chip(IC.square + (ST.freeDraw ? 'Ελεύθερο' : '90°'), 'freedraw', ST.freeDraw ? '' : 'on');
         if (floor.photo) h += chip(IC.image + 'Φωτογραφία', 'photo');
       }
     } else if (m === 'symbol') {
@@ -1219,6 +1338,7 @@
       else if (sel.kind === 'room') {
         h = chip(IC.edit + 'Όνομα', 'rname') + chip(IC.square + 'Ίσιωμα', 'rsquare') + chip(IC.split + 'Σπάσιμο τοίχου', 'rsplit') + chip(IC.gear, 'props') + chip(IC.copy, 'rdup') + chip(IC.trash, 'rdel', 'warn');
       } else if (sel.kind === 'opening') h = openingChips();
+      else if (sel.kind === 'fwall') h = `<span class="ctx-text">Τοίχος · σύρε για μετακίνηση, τις άκρες για αλλαγή</span>` + chip(IC.copy, 'fwdup') + chip(IC.trash + 'Διαγραφή', 'fwdel', 'warn');
       else if (sel.kind === 'link') h = `<span class="ctx-text">Σύνδεση διακόπτη – φωτιστικού</span>` + chip(IC.trash + 'Διαγραφή', 'ldel', 'warn');
       else h = `<span class="ctx-text" style="color:#6b7788">Πάτα χώρο ή σύμβολο για επιλογή. Σύρε σύμβολο για μετακίνηση. Δύο δάχτυλα: ζουμ.</span>`;
     }
@@ -1247,6 +1367,11 @@
     switch (a) {
       case 'tool-rect': ST.roomTool = 'rect'; finishDraft(false); setMode('room'); break;
       case 'tool-poly': ST.roomTool = 'poly'; setMode('room'); break;
+      case 'tool-wall': ST.roomTool = 'wall'; finishDraft(false); setMode('room'); break;
+      case 'walldone': finishWall(); break;
+      case 'wallcancel': ST.draft = null; updateCtx(); draw(); break;
+      case 'fwdup': { const wl = fwall(sel.id); if (wl) { const c = { id: uid(), pts: wl.pts.map(p => [p[0] + 40, p[1] + 40]) }; floor.walls.push(c); ST.sel = { kind: 'fwall', id: c.id }; commit(); updateCtx(); draw(); } break; }
+      case 'fwdel': floor.walls = floor.walls.filter(w => w.id !== sel.id); ST.sel = {}; commit(); updateCtx(); draw(); break;
       case 'freedraw': ST.freeDraw = !ST.freeDraw; if (ST.draft) ST.draft.ortho = !ST.freeDraw; updateCtx(); if (ST.freeDraw) hint('Ελεύθερο σχήμα: λοξοί τοίχοι επιτρέπονται'); break;
       case 'stripdone': finishStrip(); break;
       case 'stripcancel': ST.draft = null; updateCtx(); draw(); break;
@@ -1465,8 +1590,34 @@
     else if (sel.kind === 'room') roomProps(room(sel.id));
     else if (sel.kind === 'opening') openingProps(opening(sel.id));
   }
+  function furnProps(it) {
+    const presets = [['Μονό', 90, 190], ['Ημίδιπλο', 120, 190], ['Διπλό', 150, 200], ['Διπλό μεγάλο', 160, 200], ['King', 180, 200]];
+    const b = Sheet.open(`<h3>${symIcon(it.type, 40)}<span>Κρεβάτι</span></h3>
+      <div class="chips">${presets.map(([n, w, h]) => `<button class="chip ${it.w === w && it.h === h ? 'on' : ''}" data-w="${w}" data-h="${h}">${n} ${w}×${h}</button>`).join('')}</div>
+      <div class="slider-row"><label><span>Πλάτος</span><span id="bwv">${it.w}</span></label><input type="range" min="60" max="300" step="5" value="${it.w}" id="bw"></div>
+      <div class="slider-row"><label><span>Μήκος</span><span id="bhv">${it.h}</span></label><input type="range" min="80" max="300" step="5" value="${it.h}" id="bh"></div>
+      <p class="note" style="margin:4px 0 0">Μπορείς και να σύρεις την πορτοκαλί γωνία του κρεβατιού στο σχέδιο.</p>
+      <div class="act-row">
+        <button class="act" data-a="rot">${IC.rot}Περιστροφή</button>
+        <button class="act" data-a="dup">${IC.copy}Αντιγραφή</button>
+        <span></span>
+        <button class="act danger" data-a="del">${IC.trash}Διαγραφή</button>
+      </div>
+      <button class="btn primary" style="width:100%;margin-top:14px" data-a="ok">OK</button>`, { onClose: () => commit() });
+    const upd = () => { b.querySelector('#bwv').textContent = it.w; b.querySelector('#bhv').textContent = it.h; b.querySelector('#bw').value = it.w; b.querySelector('#bh').value = it.h;
+      b.querySelectorAll('[data-w]').forEach(c => c.classList.toggle('on', +c.dataset.w === it.w && +c.dataset.h === it.h));
+      ST.lastSize = ST.lastSize || {}; ST.lastSize[it.type] = { w: it.w, h: it.h }; draw(); };
+    b.querySelectorAll('[data-w]').forEach(c => c.onclick = () => { it.w = +c.dataset.w; it.h = +c.dataset.h; upd(); });
+    b.querySelector('#bw').oninput = e => { it.w = +e.target.value; upd(); };
+    b.querySelector('#bh').oninput = e => { it.h = +e.target.value; upd(); };
+    b.querySelector('[data-a=rot]').onclick = () => { it.rot = ((it.rot || 0) + 90) % 360; draw(); };
+    b.querySelector('[data-a=dup]').onclick = () => { Sheet.close(); duplicateItem(it); };
+    b.querySelector('[data-a=del]').onclick = () => { Sheet.onClose = null; Sheet.close(); deleteItem(it); };
+    b.querySelector('[data-a=ok]').onclick = () => Sheet.close();
+  }
   function itemProps(it) {
     if (!it) return;
+    if (isFurn(it)) { furnProps(it); return; }
     const s = SY.byId[it.type];
     const isPanel = s.kind === 'panel';
     const circs = suggestCircuits(s.kind);
