@@ -119,7 +119,7 @@
         const m = map[code] || (map[code] = { code, types: {}, rooms: new Set(), n: 0 });
         m.n++;
         m.types[it.type] = (m.types[it.type] || 0) + 1;
-        const room = rooms.find(r => R().G.inside([it.x, it.y], r.pts) || R().G.inside(R().itemCenter(it), r.pts));
+        const room = R().roomOf(fl, it);
         m.rooms.add((project.floors.length > 1 ? (fl.name || '') + ': ' : '') + (room ? room.name || 'Χώρος' : 'Εκτός χώρου'));
       });
     });
@@ -203,10 +203,10 @@
     const a = WM_ALPHA[level];
     const mark = getLogoMark();
     if (!a || !mark) return;
-    const cw = W * scale, ch = H * scale;
+    const cw = g.canvas.width, ch = g.canvas.height;
     const layer = document.createElement('canvas'); layer.width = cw; layer.height = ch;
     const l = layer.getContext('2d');
-    const sz = W * 0.075 * scale, step = sz * 2.1, fs = sz * 0.22;
+    const sz = Math.max(cw, ch) * 0.075, step = sz * 2.1, fs = sz * 0.22;
     l.translate(cw / 2, ch / 2); l.rotate(-30 * Math.PI / 180);
     l.font = `bold ${fs}px Arial, Helvetica, sans-serif`; l.textAlign = 'center'; l.textBaseline = 'top'; l.fillStyle = '#00468c';
     const R = Math.hypot(cw, ch) / 2 + step;
@@ -224,18 +224,18 @@
     g.restore();
   }
 
-  function svgToCanvas(inner, scale = 1, wm = 'none') {
+  function svgToCanvas(inner, scale = 1, wm = 'none', pw = W, ph = H, withLogo = true) {
     return new Promise((res, rej) => {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${inner}</svg>`;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${pw}" height="${ph}" viewBox="0 0 ${pw} ${ph}">${inner}</svg>`;
       const img = new Image();
       img.onload = () => {
         const c = document.createElement('canvas');
-        c.width = W * scale; c.height = H * scale;
+        c.width = pw * scale; c.height = ph * scale;
         const g = c.getContext('2d');
         g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
         g.drawImage(img, 0, 0, c.width, c.height);
         try { drawWatermark(g, scale, wm); } catch (e) { }
-        if (logoImg) { try { g.drawImage(logoImg, 30 * scale, 20 * scale, 110 * scale, 110 * scale); } catch (e) { } }
+        if (withLogo && logoImg) { try { g.drawImage(logoImg, 30 * scale, 20 * scale, 110 * scale, 110 * scale); } catch (e) { } }
         res(c);
       };
       img.onerror = () => rej(new Error('Αποτυχία σχεδίασης σελίδας'));
@@ -258,7 +258,6 @@
     const push = (u) => { parts.push(u); len += u.length; };
     const obj = (n, body) => { offsets[n] = len; push(enc(`${n} 0 obj\n`)); body.forEach(push); push(enc('\nendobj\n')); };
     push(enc('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n'));
-    const PW = 841.89, PH = 595.28;
     const n = images.length;
     const kids = [];
     for (let i = 0; i < n; i++) kids.push(`${3 + i * 3} 0 R`);
@@ -266,6 +265,8 @@
     obj(2, [enc(`<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${n} >>`)]);
     images.forEach((im, i) => {
       const pg = 3 + i * 3, ct = pg + 1, ix = pg + 2;
+      const port = im.h > im.w;
+      const PW = port ? 595.28 : 841.89, PH = port ? 841.89 : 595.28;
       obj(pg, [enc(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PW} ${PH}] /Resources << /XObject << /Im${i} ${ix} 0 R >> >> /Contents ${ct} 0 R >>`)]);
       const stream = `q ${PW} 0 0 ${PH} 0 0 cm /Im${i} Do Q`;
       obj(ct, [enc(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`)]);
@@ -292,9 +293,30 @@
     return svgs;
   }
 
+  // «Μόνο σχέδιο»: όλη η σελίδα Α4 για την κάτοψη – χωρίς κεφαλίδα, υπόμνημα και υποσέλιδο.
+  // Το χαρτί γυρίζει μόνο του κάθετο αν η κάτοψη είναι μακρόστενη.
+  function planOnlyPage(floor, opts) {
+    const b = R().floorBounds(floor);
+    const port = b.h > b.w * 1.05;
+    const pw = port ? H : W, ph = port ? W : H, m = 40;
+    const vb = `${b.x0 - 10} ${b.y0 - 10} ${b.w + 20} ${b.h + 20}`;
+    const svg = `<rect width="${pw}" height="${ph}" fill="#fff"/><svg x="${m}" y="${m}" width="${pw - 2 * m}" height="${ph - 2 * m}" viewBox="${vb}" preserveAspectRatio="xMidYMid meet">${R().floorSVG(floor, Object.assign({ exportMode: true, scale: 1 }, opts))}</svg>`;
+    return { svg, pw, ph };
+  }
+
   async function exportPDF(project, floorIds, opts) {
-    const svgs = await pagesFor(project, floorIds, opts);
     const imgs = [];
+    if (opts.planOnly) {
+      R().setSymScale((project.view && project.view.symScale) || 1.3);
+      await logo();
+      for (const fl of project.floors.filter(f => floorIds.includes(f.id))) {
+        const pg = planOnlyPage(fl, opts);
+        const c = await svgToCanvas(pg.svg, 1, opts.watermark || 'none', pg.pw, pg.ph, false);
+        imgs.push({ w: c.width, h: c.height, bytes: dataURLtoBytes(c.toDataURL('image/jpeg', 0.9)) });
+      }
+      return buildPDF(imgs);
+    }
+    const svgs = await pagesFor(project, floorIds, opts);
     for (const s of svgs) {
       const c = await svgToCanvas(s, 1, opts.watermark || 'normal');
       imgs.push({ w: c.width, h: c.height, bytes: dataURLtoBytes(c.toDataURL('image/jpeg', 0.9)) });

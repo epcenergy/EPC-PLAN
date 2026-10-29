@@ -195,6 +195,40 @@
    * Επιστρέφει το εσωτερικό SVG μιας κάτοψης (σε συντεταγμένες κόσμου)
    * opts: { scale, sel:{kind,id}, linkFrom, showCircuits, showHeights, showNotes, exportMode }
    */
+  // ----- σε ποιον χώρο ανήκει ένα σύμβολο -----
+  function distToPoly(p, pts) {
+    let d = Infinity;
+    for (let i = 0; i < pts.length; i++) d = Math.min(d, G.segDist(p, pts[i], pts[(i + 1) % pts.length]).d);
+    return d;
+  }
+  function smallest(list) {
+    let best = null, ba = Infinity;
+    list.forEach(r => { const a = Math.abs(G.area(r.pts)); if (a < ba) { ba = a; best = r; } });
+    return best;
+  }
+  function roomOf(floor, it) {
+    const rooms = floor.rooms || [];
+    if (!rooms.length) return null;
+    const raw = it.pts && it.pts.length ? null : [it.x, it.y];
+    // 1. ο χώρος που διαλέχτηκε όταν μπήκε το σύμβολο (αν το σύμβολο είναι ακόμα μέσα ή πάνω στον τοίχο του)
+    if (it.room) {
+      const r = rooms.find(x => x.id === it.room);
+      const p = raw || itemCenter(it);
+      // κρατιέται, εκτός αν το σύμβολο βρίσκεται πλέον καθαρά μέσα σε άλλον χώρο (όχι απλώς πάνω στον τοίχο του)
+      const inOther = rooms.some(x => x !== r && G.inside(p, x.pts) && distToPoly(p, x.pts) > 4);
+      if (r && (G.inside(p, r.pts) || (distToPoly(p, r.pts) < 80 && !inOther))) return r;
+    }
+    // 2. το σημείο του συμβόλου μέσα σε χώρο
+    const c = itemCenter(it);
+    let r = smallest(rooms.filter(x => G.inside(c, x.pts)));
+    if (r) return r;
+    if (raw) { r = smallest(rooms.filter(x => G.inside(raw, x.pts))); if (r) return r; }
+    // 3. ο πιο κοντινός χώρος (π.χ. τοίχος που μετακινήθηκε λίγο)
+    let best = null, bd = 80;
+    rooms.forEach(x => { const d = Math.min(distToPoly(c, x.pts), raw ? distToPoly(raw, x.pts) : Infinity); if (d < bd) { bd = d; best = x; } });
+    return best;
+  }
+
   const LINK = '#e3001b';
   // καμπύλη (τόξο) της γραμμής σύνδεσης
   const linkBend = (len) => Math.min(140, len * 0.28);
@@ -272,5 +306,5 @@
     return G.bbox(pts);
   }
 
-  window.EPC_RENDER = { linkBend, LINK, polyMid, floorParts, LAYERS, setSymScale, get SK() { return SK; }, G, floorSVG, floorBounds, itemCenter, roomPathD, esc, BLUE, ACCENT, WALL };
+  window.EPC_RENDER = { roomOf, linkBend, LINK, polyMid, floorParts, LAYERS, setSymScale, get SK() { return SK; }, G, floorSVG, floorBounds, itemCenter, roomPathD, esc, BLUE, ACCENT, WALL };
 })();

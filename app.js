@@ -7,7 +7,7 @@
   const esc = RD.esc;
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const clone = (o) => JSON.parse(JSON.stringify(o));
-  const APP_VERSION = '1.5.0';
+  const APP_VERSION = '1.6.0';
 
   // ---------- εικονίδια ----------
   const IC = {
@@ -631,10 +631,14 @@
       if (w) {
         it.x = w.x; it.y = w.y;
         it.rot = Math.round(Math.atan2(w.nx, -w.ny) * 180 / Math.PI);
+        it.room = w.room.id; // ο χώρος του τοίχου που διαλέχτηκε (σημαντικό σε κοινούς τοίχους)
         return true;
       }
     }
     it.x = snapG(p[0], 5); it.y = snapG(p[1], 5);
+    delete it.room;
+    const r = RD.roomOf(floor, it);
+    if (r) it.room = r.id;
     return false;
   }
   function placeOpening(o, p) {
@@ -841,7 +845,7 @@
         a.kind = 'roommove'; a.room = room(h.id); a.hit = h;
         a.orig = clone(a.room.pts);
         // τα σύμβολα & κουφώματα του χώρου ακολουθούν
-        a.items = floor.items.filter(it => G.inside(RD.itemCenter(it), a.room.pts) || G.inside([it.x, it.y], a.room.pts)).map(it => ({ it, x: it.x, y: it.y }));
+        a.items = floor.items.filter(it => { const r = RD.roomOf(floor, it); return r && r.id === a.room.id; }).map(it => ({ it, x: it.x, y: it.y, pts: it.pts ? clone(it.pts) : null }));
         a.ops = floor.openings.filter(o => a.room.pts.some((q, i) => G.segDist([o.x, o.y], q, a.room.pts[(i + 1) % a.room.pts.length]).d < 4)).map(o => ({ o, x: o.x, y: o.y }));
       } else {
         a.kind = 'pan'; a.hit = h;
@@ -881,7 +885,7 @@
       case 'roommove': {
         const dx = snapG(dW[0]), dy = snapG(dW[1]);
         a.room.pts = a.orig.map(p => [p[0] + dx, p[1] + dy]);
-        a.items.forEach(o => { o.it.x = o.x + dx; o.it.y = o.y + dy; });
+        a.items.forEach(o => { o.it.x = o.x + dx; o.it.y = o.y + dy; if (o.pts) o.it.pts = o.pts.map(p => [p[0] + dx, p[1] + dy]); });
         a.ops.forEach(o => { o.o.x = o.x + dx; o.o.y = o.y + dy; });
         a.dirty = true;
         break;
@@ -1055,6 +1059,7 @@
     if (d && d.type === 'strip' && d.pts.length >= 2) {
       const it = makeItem('led_strip');
       it.pts = d.pts; it.x = d.pts[0][0]; it.y = d.pts[0][1];
+      const rr = RD.roomOf(floor, it); if (rr) it.room = rr.id;
       floor.items.push(it);
       commit();
       if (navigator.vibrate) navigator.vibrate(15);
@@ -1306,7 +1311,7 @@
     ST.sel = {}; commit(); updateCtx(); draw();
   }
   async function deleteRoom(r) {
-    const inside = floor.items.filter(it => G.inside(RD.itemCenter(it), r.pts));
+    const inside = floor.items.filter(it => { const x = RD.roomOf(floor, it); return x && x.id === r.id; });
     let withItems = false;
     if (inside.length) {
       const b = await new Promise(res => {
@@ -1506,7 +1511,7 @@
   }
   function roomProps(r) {
     if (!r) return;
-    const inside = floor.items.filter(it => G.inside(RD.itemCenter(it), r.pts));
+    const inside = floor.items.filter(it => { const x = RD.roomOf(floor, it); return x && x.id === r.id; });
     const counts = {};
     inside.forEach(i => (counts[i.type] = (counts[i.type] || 0) + 1));
     const b = Sheet.open(`<h3>${esc(r.name)}</h3>
@@ -1598,21 +1603,43 @@
   // ================= PDF =================
   function pdfSheet(onlyFloor) {
     const b = Sheet.open(`<h3>Εξαγωγή PDF</h3>
+      <h4>Μορφή</h4>
+      <div class="chips" id="pdMode">${[['full', 'Πλήρης σελίδα'], ['plan', 'Μόνο σχέδιο']].map(([v, t]) => `<button class="chip ${(cur.view.pdfMode || 'full') === v ? 'on' : ''}" data-m="${v}">${t}</button>`).join('')}</div>
+      <p class="note" id="pdModeNote" style="margin:8px 0 0"></p>
       <h4>Κατόψεις</h4>
       ${cur.floors.map(f => `<label class="switch-row"><input type="checkbox" data-f="${f.id}" ${!onlyFloor || onlyFloor === f.id ? 'checked' : ''}><span>${esc(f.name)} <small style="color:#6b7788">(${f.items.length} σύμβολα)</small></span></label>`).join('')}
       <h4>Περιεχόμενο</h4>
-      <label class="switch-row"><input type="checkbox" id="pdC" checked><span>Πίνακας κυκλωμάτων</span></label>
+      <label class="switch-row" id="pdCRow"><input type="checkbox" id="pdC" checked><span>Πίνακας κυκλωμάτων</span></label>
       <label class="switch-row"><input type="checkbox" id="pdCi" ${cur.view.circuits !== false ? 'checked' : ''}><span>Αριθμοί κυκλωμάτων στο σχέδιο</span></label>
       <label class="switch-row"><input type="checkbox" id="pdH" ${cur.view.heights !== false ? 'checked' : ''}><span>Ύψη στο σχέδιο</span></label>
       <label class="switch-row"><input type="checkbox" id="pdN" ${cur.view.notes !== false ? 'checked' : ''}><span>Σημειώσεις στο σχέδιο</span></label>
       <h4>Υδατογράφημα (λογότυπο + EPC ENERGY)</h4>
       <div class="chips" id="pdW">${[['none', 'Χωρίς'], ['light', 'Αχνό'], ['normal', 'Κανονικό'], ['strong', 'Έντονο']].map(([v, t]) => `<button class="chip ${(cur.view.wm || 'normal') === v ? 'on' : ''}" data-w="${v}">${t}</button>`).join('')}</div>
       <button class="btn primary" style="width:100%;margin-top:14px" data-a="go">Δημιουργία PDF</button>`);
-    b.querySelectorAll('[data-w]').forEach(c => c.onclick = () => { cur.view.wm = c.dataset.w; saveSoon(); b.querySelectorAll('[data-w]').forEach(x => x.classList.toggle('on', x === c)); });
+    const setWm = (v) => { b.querySelectorAll('[data-w]').forEach(x => x.classList.toggle('on', x.dataset.w === v)); };
+    b.querySelectorAll('[data-w]').forEach(c => c.onclick = () => {
+      if (cur.view.pdfMode === 'plan') cur.view.wmPlan = c.dataset.w; else cur.view.wm = c.dataset.w;
+      saveSoon(); setWm(c.dataset.w);
+    });
+    // «Μόνο σχέδιο»: χωρίς κεφαλίδα, υπόμνημα, κυκλώματα· υδατογράφημα από προεπιλογή «Χωρίς»
+    const applyMode = () => {
+      const plan = cur.view.pdfMode === 'plan';
+      b.querySelectorAll('[data-m]').forEach(x => x.classList.toggle('on', x.dataset.m === (plan ? 'plan' : 'full')));
+      b.querySelector('#pdCRow').style.display = plan ? 'none' : '';
+      b.querySelector('#pdModeNote').textContent = plan
+        ? 'Μόνο η κάτοψη σε όλο το Α4, όσο πιο μεγάλη χωράει. Χωρίς λογότυπο, στοιχεία πελάτη και υπόμνημα. Το χαρτί γυρίζει κάθετο αν η κάτοψη είναι μακρόστενη.'
+        : 'Κεφαλίδα με λογότυπο και στοιχεία έργου, υπόμνημα και πίνακας κυκλωμάτων.';
+      setWm(plan ? (cur.view.wmPlan || 'none') : (cur.view.wm || 'normal'));
+    };
+    b.querySelectorAll('[data-m]').forEach(c => c.onclick = () => { cur.view.pdfMode = c.dataset.m; saveSoon(); applyMode(); });
+    applyMode();
     b.querySelector('[data-a=go]').onclick = async () => {
       const ids = [...b.querySelectorAll('[data-f]')].filter(c => c.checked).map(c => c.dataset.f);
       if (!ids.length) { toast('Διάλεξε τουλάχιστον μία κάτοψη'); return; }
-      const opts = { circuits: b.querySelector('#pdC').checked, showCircuits: b.querySelector('#pdCi').checked, showHeights: b.querySelector('#pdH').checked, showNotes: b.querySelector('#pdN').checked, watermark: cur.view.wm || 'normal' };
+      const opts = { circuits: b.querySelector('#pdC').checked, showCircuits: b.querySelector('#pdCi').checked, showHeights: b.querySelector('#pdH').checked, showNotes: b.querySelector('#pdN').checked };
+      opts.planOnly = cur.view.pdfMode === 'plan';
+      opts.watermark = opts.planOnly ? (cur.view.wmPlan || 'none') : (cur.view.wm || 'normal');
+      if (opts.planOnly) opts.circuits = false;
       Sheet.close(); busy(true, 'Δημιουργία PDF…');
       try {
         await saveNow();
